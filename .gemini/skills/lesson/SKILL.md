@@ -88,3 +88,12 @@ This skill documents the critical decisions and technical hurdles encountered du
   - Use **Cards** with background materials (`Color.white.opacity(0.05)`) to group related commit info.
   - Implement **File-Type Iconography** (e.g., `swift`, `braces` for JSON, `photo` for images) using SF Symbols to provide immediate visual context for changed files.
   - Use **Monospaced Fonts** for hashes and file paths to maintain alignment and technical feel.
+
+### 14. Inline Diff Rendering
+- **Lesson**: Users need to see exactly what changed within a file without leaving the menu bar interface.
+- **Solution**: Implement surgical diff retrieval using `git show --pretty=format: <hash> -- <path>`.
+- **Standard**: 
+  - **Color Coding**: Use `green` for additions (`+`), `red` for deletions (`-`), and `blue` for diff hunks (`@@`).
+  - **Interactivity**: Use `withAnimation` (Spring) to expand/collapse file rows.
+  - **Horizontal Handling**: Wrap diff content in a horizontal `ScrollView` to preserve code indentation and long lines.
+  - **On-Demand Loading**: Only fetch and store the diff text when the row is first expanded to save memory.
