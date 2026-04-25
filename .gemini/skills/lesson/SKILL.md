@@ -72,3 +72,19 @@ This skill documents the critical decisions and technical hurdles encountered du
 
 ### 10. Progressive Disclosure
 - **Lesson**: Don't clutter the main view. Use dropdowns for Repo/Branch selection and slide-in Detail views for commit files.
+
+### 11. Persistent Dialogs in Menu Bar Apps (Copy-Paste Support)
+- **Problem**: Standard `NSPopover` with `.transient` behavior closes automatically when the user switches to a browser to copy a Personal Access Token.
+- **Solution**: Use `.applicationDefined` behavior for dialog popovers (Auth, Add Repo) to ensure they stay open until explicitly dismissed or saved.
+- **Standard**: For any view requiring user input from external sources, bypass transient behavior.
+
+### 12. SwiftUI-AppKit Hybrid Architecture
+- **Lesson**: Modernizing a legacy AppKit app is most efficient using `NSHostingController`.
+- **Standard**: Build complex dialogs and detail sections in SwiftUI, then bridge them into the `AppDelegate` or `NSViewController` using `NSHostingController` and `NSHostingView`.
+
+### 13. Data Scanability in Commit Details
+- **Lesson**: Flat text lists of files are hard to parse.
+- **Standard**: 
+  - Use **Cards** with background materials (`Color.white.opacity(0.05)`) to group related commit info.
+  - Implement **File-Type Iconography** (e.g., `swift`, `braces` for JSON, `photo` for images) using SF Symbols to provide immediate visual context for changed files.
+  - Use **Monospaced Fonts** for hashes and file paths to maintain alignment and technical feel.
