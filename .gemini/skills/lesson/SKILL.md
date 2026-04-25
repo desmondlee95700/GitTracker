@@ -19,50 +19,56 @@ This skill documents the critical decisions and technical hurdles encountered du
   ```
 - **Standard**: For all top-down menu bar layouts, use `FlippedView` or `FlippedStackView`.
 
-### 2. Shallow Clones vs. Full History
-- **Problem**: Initial clones used `--depth=1` to save time, resulting in `grafted` commits and missing branches.
-- **Solution**: Always perform a **full clone** and **full fetch** to ensure the Git Graph and all branches are visible.
-- **Command**: Use `git clone [URL] [PATH]` without depth flags.
+### 2. Threading & Concurrency (Beachball Prevention)
+- **Problem**: Running heavy Git commands (cloning, checkout, fetch) on the Main Thread causes the macOS menu bar to freeze.
+- **Solution**: Move all shell operations to background queues:
+  ```swift
+  DispatchQueue.global(qos: .userInitiated).async {
+      let result = self.runShell(args: ["checkout", branch])
+      DispatchQueue.main.async { self.reloadUI() }
+  }
+  ```
+- **Standard**: Never block the main thread with `Process` execution. Use status messages ("⌛ Checking out...") to provide feedback.
 
-### 3. Background Authentication Reliability
-- **Problem**: Modern GitHub security and background execution make "interactive" or "device flow" logins prone to "Not Found" errors or silent failures.
-- **Solution**: Standardized on **Explicit Credentials (Username + PAT)** stored locally.
-- **Implementation**: Injected via the URL format: `https://TOKEN@github.com/...`.
+### 3. Robust Git Utilities
+- **Lesson**: `git checkout` can fail (e.g., local conflicts). Silent failures lead to UI desync.
+- **Standard**: Always use a `runShell` utility that returns both the `output` string and a `success` boolean. Only update state if `success` is true.
+
+### 4. Background Authentication Reliability
+- **Standard**: Standardized on **Explicit Credentials (Username + PAT)** stored locally. Injected via the URL format: `https://TOKEN@github.com/...`.
 
 ## 🎨 UI/UX & Design Lessons
 
-### 4. Popover Focus Management
-- **Problem**: Opening system dialogs (like `NSOpenPanel`) often forces the app to "Activate", which automatically hides the menu bar popover.
-- **Solution**: Avoid `NSApp.activate(ignoringOtherApps: true)` when presenting alerts or panels from a popover.
+### 5. Branch Switching Best Practices
+- **Problem**: Checking out a remote branch directly (`origin/main`) puts the user in a "Detached HEAD" state.
+- **Expert Solution**: Automatically create a local tracking branch:
+  ```bash
+  git checkout -b <name> --track origin/<name>
+  ```
+- **UI Standard**: If a user clicks a Remote branch, check for a local version first; if missing, create and track it automatically.
 
-### 5. SF Symbols over Emojis
-- **Problem**: Emojis lack depth and don't adapt to system tinting or font weights.
-- **Solution**: Use **Hierarchical SF Symbols** (e.g., `folder.fill`, `arrow.triangle.branch`) for a native, premium feel.
+### 6. Menu Categorization & Iconography
+- **Standard**: Group branches into "Local" (💻 `laptopcomputer`) and "Remote" (☁️ `cloud.fill`) sections.
+- **Dual-Checkmarks**: If the current branch tracks an upstream, show checkmarks on **both** the local and remote entries to signify the link.
+- **Upstream Detection**: Display a small cloud icon in the dropdown label if the current branch has an upstream connection.
 
-### 6. Branch Color Coding Strategy
-- **Standard**: To improve visual scanning of the commit graph, we use a high-contrast color scheme:
-  - **Green** (`.systemGreen`): Stable/Production branches (`main`, `master`).
-  - **Yellow** (`.systemYellow`): Integration branches (`dev`, `develop`).
-  - **Blue** (`.systemBlue`): Feature branches and all others.
-- **Implementation**: Managed via the `getBranchColor(deco:)` function in `GitTracker.swift`.
+### 7. Branch Color Coding Strategy
+- **Standard**: 
+  - **Green**: Production branches (`main`, `master`).
+  - **Yellow**: Development/Integration (`dev`, `develop`).
+  - **Blue**: Features and others.
+  - **Gray**: Tracking branches (`origin/...`) to reduce visual weight.
 
-### 7. Menu Categorization & Iconography
-- **Lesson**: Flat lists of branches are confusing when mixing local and remote refs.
-- **Standard**: Always group branches into "Local" and "Remote" sections in dropdowns.
-- **Iconography**: 
-  - Use `laptopcomputer` for local branches to signify "on this machine".
-  - Use `cloud.fill` for remote branches (`origin/`) to signify "on the server".
-- **UX**: Strip "origin/" prefixes in remote section labels to reduce visual noise while maintaining the full ref for the underlying `git checkout` command.
-
-### 8. SwiftUI-in-AppKit Bridge
-- **Problem**: Complex list animations and glassmorphism (Material) are difficult in pure AppKit.
-- **Solution**: Use **`NSHostingView`** to embed SwiftUI views within the AppKit architecture.
-- **Pattern**: `let hostingView = NSHostingView(rootView: MySwiftUIView())`.
+### 8. Professional App Branding
+- **Lesson**: Missing `.app` bundles cause white square icons in Spotlight.
+- **Standard**: 
+  - Set `LSUIElement` to `true` in `Info.plist` for menu-bar-only behavior.
+  - **Programmatic Fallback**: Generate a high-quality branded icon (Blue Background + White Glyph) in code during `applicationDidFinishLaunching` to ensure consistent branding regardless of the build environment.
 
 ## 🛡 Security & Process Lessons
 
-### 7. Configuration Sanitization
-- **Standard**: Always add `config.json` (containing the PAT) to **`.gitignore`** immediately. Use `git rm --cached` if a secret was accidentally tracked.
+### 9. Configuration Sanitization
+- **Standard**: Always add `config.json` and compiled binaries/bundles to **`.gitignore`**. Use `git rm --cached` if a secret or binary was accidentally tracked.
 
-### 8. Progressive Disclosure
+### 10. Progressive Disclosure
 - **Lesson**: Don't clutter the main view. Use dropdowns for Repo/Branch selection and slide-in Detail views for commit files.
