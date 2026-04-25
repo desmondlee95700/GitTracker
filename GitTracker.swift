@@ -424,12 +424,12 @@ class GitTrackerController: NSViewController {
     
     init(config: Config, onAction: @escaping (String) -> Void) { self.config = config; self.onAction = onAction; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override func loadView() { let effectView = NSVisualEffectView(); effectView.blendingMode = .behindWindow; effectView.state = .active; effectView.material = .hudWindow; self.view = effectView; self.view.setFrameSize(NSSize(width: 480, height: 780)) }
+    override func loadView() { let effectView = NSVisualEffectView(); effectView.blendingMode = .behindWindow; effectView.state = .active; effectView.material = .hudWindow; self.view = effectView; self.view.setFrameSize(NSSize(width: 480, height: 820)) }
     override func viewDidLoad() { super.viewDidLoad(); setupUI() }
     
     func setupUI() {
-        let rootStack = FlippedStackView(); rootStack.orientation = .vertical; rootStack.spacing = 18; rootStack.alignment = .leading
-        rootStack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 20, right: 24); rootStack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(rootStack)
+        let rootStack = FlippedStackView(); rootStack.orientation = .vertical; rootStack.spacing = 14; rootStack.alignment = .leading
+        rootStack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24); rootStack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(rootStack)
         NSLayoutConstraint.activate([rootStack.topAnchor.constraint(equalTo: view.topAnchor), rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor), rootStack.trailingAnchor.constraint(equalTo: view.trailingAnchor), rootStack.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
         
         let headerStack = NSStackView(); headerStack.orientation = .horizontal; headerStack.alignment = .centerY; headerStack.spacing = 12
@@ -467,6 +467,8 @@ class GitTrackerController: NSViewController {
         footerBox.addSubview(footer); footer.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([footer.topAnchor.constraint(equalTo: footerBox.topAnchor), footer.leadingAnchor.constraint(equalTo: footerBox.leadingAnchor), footer.trailingAnchor.constraint(equalTo: footerBox.trailingAnchor), footer.bottomAnchor.constraint(equalTo: footerBox.bottomAnchor)])
         rootStack.addArrangedSubview(footerBox); NSLayoutConstraint.activate([footerBox.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
+        
+        let vLabel = NSTextField(labelWithString: "VERSION 2.1"); vLabel.font = .systemFont(ofSize: 10, weight: .bold); vLabel.textColor = .tertiaryLabelColor; vLabel.alignment = .center; vLabel.isBordered = false; vLabel.drawsBackground = false; rootStack.addArrangedSubview(vLabel); NSLayoutConstraint.activate([vLabel.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
         
         updateUIState(); onAction("updateAllStatus")
     }
