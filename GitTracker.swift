@@ -215,7 +215,7 @@ struct CommitDetailView: View {
                         } else {
                             VStack(spacing: 1) {
                                 ForEach(Array(files.enumerated()), id: \.element) { index, file in
-                                    FileRowView(file: file)
+                                    FileRowView(file: file, commitHash: commit.hash, repoPath: repoPath)
                                         .background(index % 2 == 0 ? Color.clear : Color.white.opacity(0.02))
                                 }
                             }
@@ -253,6 +253,12 @@ struct CommitDetailView: View {
 
 struct FileRowView: View {
     let file: String
+    let commitHash: String
+    let repoPath: String
+    
+    @State private var isExpanded = false
+    @State private var diffText: String? = nil
+    @State private var isLoadingDiff = false
     
     var fileExtension: String {
         (file as NSString).pathExtension.lowercased()
@@ -270,23 +276,117 @@ struct FileRowView: View {
     }
     
     var body: some View {
-        HStack(spacing: 12) {
-            let (icon, color) = fileIcon
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundColor(color)
-                .frame(width: 20)
+        VStack(spacing: 0) {
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    isExpanded.toggle()
+                }
+                if isExpanded && diffText == nil {
+                    loadDiff()
+                }
+            }) {
+                HStack(spacing: 12) {
+                    let (icon, color) = fileIcon
+                    Image(systemName: icon)
+                        .font(.system(size: 12))
+                        .foregroundColor(color)
+                        .frame(width: 20)
+                    
+                    Text(file)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.primary.opacity(0.9))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             
-            Text(file)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(.primary.opacity(0.9))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            
-            Spacer()
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    if isLoadingDiff {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                                .scaleEffect(0.6)
+                            Spacer()
+                        }
+                        .padding(.vertical, 12)
+                    } else if let diff = diffText {
+                        if diff.isEmpty {
+                            Text("Binary or unsupported file diff.")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .padding()
+                        } else {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    let lines = diff.components(separatedBy: "\n")
+                                    ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                                        Text(line)
+                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                            .foregroundColor(colorForLine(line))
+                                            .padding(.horizontal, 8)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .background(backgroundColorForLine(line))
+                                    }
+                                }
+                                .padding(.vertical, 8)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.black.opacity(0.15))
+                .overlay(Rectangle().frame(width: 2).foregroundColor(Color.blue.opacity(0.5)), alignment: .leading)
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+    }
+    
+    func colorForLine(_ line: String) -> Color {
+        if line.hasPrefix("+") && !line.hasPrefix("+++") { return .green }
+        if line.hasPrefix("-") && !line.hasPrefix("---") { return .red }
+        if line.hasPrefix("@@") { return .blue }
+        return .secondary
+    }
+    
+    func backgroundColorForLine(_ line: String) -> Color {
+        if line.hasPrefix("+") && !line.hasPrefix("+++") { return Color.green.opacity(0.1) }
+        if line.hasPrefix("-") && !line.hasPrefix("---") { return Color.red.opacity(0.1) }
+        if line.hasPrefix("@@") { return Color.blue.opacity(0.05) }
+        return .clear
+    }
+    
+    func loadDiff() {
+        isLoadingDiff = true
+        let task = Process()
+        task.launchPath = "/usr/bin/git"
+        task.arguments = ["-C", repoPath, "show", "--pretty=format:", commitHash, "--", file]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.launch()
+        
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if let output = String(data: data, encoding: .utf8) {
+            DispatchQueue.main.async {
+                self.diffText = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.isLoadingDiff = false
+            }
+        } else {
+            DispatchQueue.main.async {
+                self.diffText = "Error loading diff"
+                self.isLoadingDiff = false
+            }
+        }
     }
 }
 
