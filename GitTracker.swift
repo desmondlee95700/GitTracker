@@ -337,6 +337,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength); let popover = NSPopover(); var config = Config()
     func applicationDidFinishLaunching(_ notification: Notification) {
         migrateConfig(); loadConfig()
+        
+        // Expert UI: Generate App Icon (Blue Background + White Glyph)
+        let iconSize = NSSize(width: 128, height: 128)
+        let icon = NSImage(size: iconSize, flipped: false) { rect in
+            let path = NSBezierPath(roundedRect: rect, xRadius: 28, yRadius: 28)
+            NSColor.systemBlue.set(); path.fill()
+            
+            if #available(macOS 11.0, *), let glyph = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil) {
+                let glyphConfig = NSImage.SymbolConfiguration(pointSize: 64, weight: .black)
+                let whiteGlyph = glyph.withSymbolConfiguration(glyphConfig)?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.white]))
+                let glyphRect = NSRect(x: 32, y: 32, width: 64, height: 64)
+                whiteGlyph?.draw(in: glyphRect)
+            }
+            return true
+        }
+        NSApp.applicationIconImage = icon
+        
         if let b = statusItem.button { 
             if #available(macOS 11.0, *), let img = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil) { img.isTemplate = true; b.image = img } else { b.title = "ᚠ" }
             b.action = #selector(togglePopover); b.target = self 
