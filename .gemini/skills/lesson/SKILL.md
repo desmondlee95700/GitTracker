@@ -46,7 +46,15 @@ This skill documents the critical decisions and technical hurdles encountered du
   - **Blue** (`.systemBlue`): Feature branches and all others.
 - **Implementation**: Managed via the `getBranchColor(deco:)` function in `GitTracker.swift`.
 
-### 7. SwiftUI-in-AppKit Bridge
+### 7. Menu Categorization & Iconography
+- **Lesson**: Flat lists of branches are confusing when mixing local and remote refs.
+- **Standard**: Always group branches into "Local" and "Remote" sections in dropdowns.
+- **Iconography**: 
+  - Use `laptopcomputer` for local branches to signify "on this machine".
+  - Use `cloud.fill` for remote branches (`origin/`) to signify "on the server".
+- **UX**: Strip "origin/" prefixes in remote section labels to reduce visual noise while maintaining the full ref for the underlying `git checkout` command.
+
+### 8. SwiftUI-in-AppKit Bridge
 - **Problem**: Complex list animations and glassmorphism (Material) are difficult in pure AppKit.
 - **Solution**: Use **`NSHostingView`** to embed SwiftUI views within the AppKit architecture.
 - **Pattern**: `let hostingView = NSHostingView(rootView: MySwiftUIView())`.

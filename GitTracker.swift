@@ -47,10 +47,31 @@ struct ProjectSelectionView: View {
     
     var branchDropdown: some View {
         Menu {
-            ForEach(branches, id: \.self) { branch in Button(branch) { onBranchChange(branch) } }
+            let localBranches = branches.filter { !$0.hasPrefix("origin/") }
+            let remoteBranches = branches.filter { $0.hasPrefix("origin/") }
+            
+            if !localBranches.isEmpty {
+                Section("Local") {
+                    ForEach(localBranches, id: \.self) { branch in
+                        Button { onBranchChange(branch) } label: {
+                            Label(branch, systemImage: "laptopcomputer")
+                        }
+                    }
+                }
+            }
+            
+            if !remoteBranches.isEmpty {
+                Section("Remote") {
+                    ForEach(remoteBranches, id: \.self) { branch in
+                        Button { onBranchChange(branch) } label: {
+                            Label(branch.replacingOccurrences(of: "origin/", with: ""), systemImage: "cloud.fill")
+                        }
+                    }
+                }
+            }
         } label: {
             HStack {
-                Text(selectedBranch).font(.system(size: 14, weight: .semibold))
+                Text(selectedBranch).font(.system(size: 14, weight: .bold))
                 Spacer(); Image(systemName: "chevron.up.chevron.down").font(.system(size: 10))
             }.padding(.horizontal, 10).padding(.vertical, 6).background(Color.white.opacity(0.08)).cornerRadius(8)
         }.disabled(repos.isEmpty)
@@ -139,9 +160,13 @@ struct CommitRowView: View {
                         let branches = commit.decoration.replacingOccurrences(of: "HEAD -> ", with: "").components(separatedBy: ", ")
                         ForEach(branches, id: \.self) { branch in
                             let name = branch.trimmingCharacters(in: .whitespaces)
-                            if !name.isEmpty {
-                                let isTag = name.hasPrefix("tag: "); let cleanName = name.replacingOccurrences(of: "tag: ", with: "")
-                                Text(cleanName).font(.system(size: 9, weight: .bold, design: .monospaced)).padding(.horizontal, 6).padding(.vertical, 2).background(isTag ? Color.orange.opacity(0.6) : Color.blue.opacity(0.6)).cornerRadius(4).foregroundColor(.white)                            }
+                            if !name.isEmpty && name != "origin/HEAD" {
+                                let isTag = name.hasPrefix("tag: ")
+                                let isRemote = name.hasPrefix("origin/")
+                                let cleanName = name.replacingOccurrences(of: "tag: ", with: "")
+                                let bgColor = isTag ? Color.orange.opacity(0.6) : (isRemote ? Color.gray.opacity(0.6) : Color.blue.opacity(0.6))
+                                Text(cleanName).font(.system(size: 9, weight: .bold, design: .monospaced)).padding(.horizontal, 6).padding(.vertical, 2).background(bgColor).cornerRadius(4).foregroundColor(.white)
+                            }
                         }
                     }
                     Text(commit.message).font(.system(size: 13, weight: .semibold)).lineLimit(1).foregroundColor(.white)
@@ -237,12 +262,11 @@ class GitTrackerController: NSViewController {
             return
         }
         let branchOut = runGit(args: ["-C", currentRepo.path, "branch", "-a", "--format=%(refname:short)"])
-        var branches = ["All Branches"]
+        var branches = [String]()
         for b in branchOut.components(separatedBy: "\n") {
             let clean = b.trimmingCharacters(in: .whitespaces)
-            if !clean.isEmpty && clean != "HEAD" && !clean.hasSuffix("/HEAD") {
-                let name = clean.replacingOccurrences(of: "origin/", with: "")
-                if !branches.contains(name) { branches.append(name) }
+            if !clean.isEmpty && clean != "HEAD" && !clean.hasSuffix("/HEAD") && clean != "origin" {
+                if !branches.contains(clean) { branches.append(clean) }
             }
         }
         let repoStatus = getRepoStatus(path: currentRepo.path)
@@ -261,7 +285,7 @@ class GitTrackerController: NSViewController {
     
     func updateCommits() {
         guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else { return }
-        let lines = runGit(args: ["-C", currentRepo.path, "log", "--all", "-n", "100", "--pretty=format:%h|%s|%ar|%an|%D"]).components(separatedBy: "\n").filter { !$0.isEmpty }
+        let lines = runGit(args: ["-C", currentRepo.path, "log", "-n", "100", "--pretty=format:%h|%s|%ar|%an|%D"]).components(separatedBy: "\n").filter { !$0.isEmpty }
         var commits = [Commit]()
         for line in lines {
             let parts = line.components(separatedBy: "|")
@@ -328,7 +352,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if type.hasPrefix("branchChanged:") {
             let branch = type.replacingOccurrences(of: "branchChanged:", with: "")
             if branch != "All Branches", let currentRepo = config.currentRepo {
-                _ = runShell(args: ["-C", currentRepo.path, "checkout", branch])
+                if branch.hasPrefix("origin/") {
+                    let localName = branch.replacingOccurrences(of: "origin/", with: "")
+                    // Try to checkout local, if fails, create tracking branch
+                    let exists = runShell(args: ["-C", currentRepo.path, "show-ref", "--verify", "refs/heads/\(localName)"])
+                    if exists.isEmpty || exists.hasPrefix("fatal") {
+                        _ = runShell(args: ["-C", currentRepo.path, "checkout", "-b", localName, "--track", branch])
+                    } else {
+                        _ = runShell(args: ["-C", currentRepo.path, "checkout", localName])
+                    }
+                } else {
+                    _ = runShell(args: ["-C", currentRepo.path, "checkout", branch])
+                }
                 reloadUI()
             }; return
         }
