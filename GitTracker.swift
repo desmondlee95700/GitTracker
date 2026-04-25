@@ -254,7 +254,8 @@ class GitTrackerController: NSViewController {
             if repoStatus.2 > 0 { parts.append("↓\(repoStatus.2)") }
             statusStr = parts.joined(separator: " "); statusColor = .orange
         }
-        selectionHostingView.rootView = ProjectSelectionView(repos: config.repos, selectedRepoIndex: config.selectedRepoIndex, selectedBranch: "All Branches", branches: branches, status: statusStr, statusColor: statusColor, onRepoChange: { i in self.onAction("repoChanged:\(i)") }, onBranchChange: { b in self.onAction("branchChanged:\(b)") }, onAdd: { self.onAction("track") }, onRemove: { self.onAction("clear") })
+        let currentBranch = runGit(args: ["-C", currentRepo.path, "rev-parse", "--abbrev-ref", "HEAD"])
+        selectionHostingView.rootView = ProjectSelectionView(repos: config.repos, selectedRepoIndex: config.selectedRepoIndex, selectedBranch: currentBranch, branches: branches, status: statusStr, statusColor: statusColor, onRepoChange: { i in self.onAction("repoChanged:\(i)") }, onBranchChange: { b in self.onAction("branchChanged:\(b)") }, onAdd: { self.onAction("track") }, onRemove: { self.onAction("clear") })
         updateCommits()
     }
     
@@ -324,6 +325,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func handleAction(_ type: String) {
         if type.hasPrefix("repoChanged:") { if let index = Int(type.replacingOccurrences(of: "repoChanged:", with: "")) { config.selectedRepoIndex = index; saveConfig(); reloadUI() }; return }
+        if type.hasPrefix("branchChanged:") {
+            let branch = type.replacingOccurrences(of: "branchChanged:", with: "")
+            if branch != "All Branches", let currentRepo = config.currentRepo {
+                _ = runShell(args: ["-C", currentRepo.path, "checkout", branch])
+                reloadUI()
+            }; return
+        }
         if type == "updateAllStatus" { updateAllStatus(); return }
         switch type {
         case "sync": refreshRepo(); case "track": promptForRepo(); case "auth": promptForAuth(); case "clear": clearRepo(); case "quit": NSApp.terminate(nil)
