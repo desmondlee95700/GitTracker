@@ -10,6 +10,53 @@ class FlippedStackView: NSStackView {
     override var isFlipped: Bool { return true }
 }
 
+// --- Custom View for the Segmented Status Bar ---
+class StackedStatusBar: NSView {
+    var cleanCount: Int = 0
+    var dirtyCount: Int = 0
+    var aheadCount: Int = 0
+    var behindCount: Int = 0
+    
+    func update(clean: Int, dirty: Int, ahead: Int, behind: Int) {
+        self.cleanCount = clean
+        self.dirtyCount = dirty
+        self.aheadCount = ahead
+        self.behindCount = behind
+        self.needsDisplay = true
+    }
+    
+    override func draw(_ dirtyRect: NSRect) {
+        let total = CGFloat(cleanCount + dirtyCount + aheadCount + behindCount)
+        if total == 0 { 
+            NSColor.white.withAlphaComponent(0.1).set()
+            let path = NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4)
+            path.fill()
+            return 
+        }
+        
+        let path = NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4)
+        path.addClip()
+        
+        var currentX: CGFloat = 0
+        let segments: [(Int, NSColor)] = [
+            (behindCount, .systemRed),
+            (aheadCount, .systemBlue),
+            (dirtyCount, .systemOrange),
+            (cleanCount, .systemGreen)
+        ]
+        
+        for (count, color) in segments {
+            if count > 0 {
+                let width = (CGFloat(count) / total) * bounds.width
+                color.set()
+                let rect = NSRect(x: currentX, y: 0, width: width, height: bounds.height)
+                rect.fill()
+                currentX += width
+            }
+        }
+    }
+}
+
 // --- Configuration ---
 let trackerRoot = "/Users/dessy/Documents/sidehustle/GitTrackerTracker"
 let configFilePath = "\(trackerRoot)/config.json"
@@ -43,6 +90,8 @@ class GitTrackerController: NSViewController {
     var branchPicker: NSPopUpButton!
     var repoPicker: NSPopUpButton!
     var branchStatusLabel: NSTextField!
+    var summaryBar: StackedStatusBar!
+    var summaryLabel: NSTextField!
     
     init(config: Config, onAction: @escaping (String) -> Void) {
         self.config = config
@@ -58,7 +107,7 @@ class GitTrackerController: NSViewController {
         effectView.state = .active
         effectView.material = .hudWindow
         self.view = effectView
-        self.view.setFrameSize(NSSize(width: 480, height: 740))
+        self.view.setFrameSize(NSSize(width: 480, height: 780))
     }
     
     override func viewDidLoad() {
@@ -82,23 +131,11 @@ class GitTrackerController: NSViewController {
             rootStack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
         
-        // --- Header (Redesigned) ---
-        let headerBox = NSBox()
-        headerBox.boxType = .custom
-        headerBox.titlePosition = .noTitle
-        headerBox.fillColor = .clear
-        headerBox.borderWidth = 0
-        
+        // --- Header ---
         let headerStack = NSStackView()
         headerStack.orientation = .horizontal
         headerStack.alignment = .centerY
-        headerStack.spacing = 16
-        
-        // App Icon/Title
-        let titleStack = NSStackView()
-        titleStack.orientation = .horizontal
-        titleStack.spacing = 8
-        titleStack.alignment = .centerY
+        headerStack.spacing = 12
         
         if #available(macOS 11.0, *), let img = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil) {
             let iconImg = NSImageView(image: img)
@@ -106,64 +143,65 @@ class GitTrackerController: NSViewController {
             iconImg.translatesAutoresizingMaskIntoConstraints = false
             iconImg.widthAnchor.constraint(equalToConstant: 24).isActive = true
             iconImg.heightAnchor.constraint(equalToConstant: 24).isActive = true
-            titleStack.addArrangedSubview(iconImg)
-        } else {
-            let iconLabel = NSTextField(labelWithString: "ᚠ")
-            iconLabel.font = .systemFont(ofSize: 28, weight: .black)
-            iconLabel.textColor = .systemBlue
-            titleStack.addArrangedSubview(iconLabel)
+            headerStack.addArrangedSubview(iconImg)
         }
         
         let titleLabel = NSTextField(labelWithString: "GitTracker")
         titleLabel.font = .systemFont(ofSize: 26, weight: .heavy)
-        titleLabel.textColor = .white
+        headerStack.addArrangedSubview(titleLabel)
         
-        titleStack.addArrangedSubview(titleLabel)
-        headerStack.addArrangedSubview(titleStack)
-        
-        // Push status to the right
-        headerStack.addArrangedSubview(NSView()) 
+        headerStack.addArrangedSubview(NSView())
         headerStack.arrangedSubviews.last?.setContentHuggingPriority(.defaultLow, for: .horizontal)
         
-        let statusBox = NSBox()
-        statusBox.boxType = .custom
-        statusBox.titlePosition = .noTitle
-        statusBox.fillColor = config.token != nil ? NSColor.systemGreen.withAlphaComponent(0.15) : NSColor.systemRed.withAlphaComponent(0.15)
-        statusBox.cornerRadius = 12
-        statusBox.borderWidth = 1
-        statusBox.borderColor = config.token != nil ? NSColor.systemGreen.withAlphaComponent(0.3) : NSColor.systemRed.withAlphaComponent(0.3)
-        
-        statusLabel = NSTextField(labelWithString: config.token != nil ? "● Authenticated" : "○ Unauthenticated")
+        statusLabel = NSTextField(labelWithString: config.token != nil ? "● Auth Active" : "○ No Auth Set")
         statusLabel.font = .systemFont(ofSize: 11, weight: .bold)
         statusLabel.textColor = config.token != nil ? .systemGreen : .systemRed
-        statusLabel.alignment = .center
+        headerStack.addArrangedSubview(statusLabel)
         
-        statusBox.addSubview(statusLabel)
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        rootStack.addArrangedSubview(headerStack)
+        
+        // --- Global Summary Bar ---
+        let summaryBox = NSBox()
+        summaryBox.boxType = .custom
+        summaryBox.fillColor = NSColor.white.withAlphaComponent(0.03)
+        summaryBox.cornerRadius = 8
+        summaryBox.borderWidth = 0
+        
+        let summaryStack = NSStackView()
+        summaryStack.orientation = .vertical
+        summaryStack.alignment = .leading
+        summaryStack.spacing = 8
+        summaryStack.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+        
+        summaryLabel = NSTextField(labelWithString: "OVERVIEW")
+        summaryLabel.font = .systemFont(ofSize: 10, weight: .black)
+        summaryLabel.textColor = .secondaryLabelColor
+        summaryStack.addArrangedSubview(summaryLabel)
+        
+        summaryBar = StackedStatusBar()
+        summaryBar.translatesAutoresizingMaskIntoConstraints = false
+        summaryStack.addArrangedSubview(summaryBar)
+        
         NSLayoutConstraint.activate([
-            statusLabel.centerXAnchor.constraint(equalTo: statusBox.centerXAnchor),
-            statusLabel.centerYAnchor.constraint(equalTo: statusBox.centerYAnchor),
-            statusBox.heightAnchor.constraint(equalToConstant: 24),
-            statusBox.widthAnchor.constraint(equalTo: statusLabel.widthAnchor, constant: 20)
+            summaryBar.heightAnchor.constraint(equalToConstant: 8),
+            summaryBar.widthAnchor.constraint(equalTo: summaryStack.widthAnchor, constant: -32)
         ])
         
-        headerStack.addArrangedSubview(statusBox)
-        
-        headerBox.addSubview(headerStack)
-        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        summaryBox.addSubview(summaryStack)
+        summaryStack.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            headerStack.topAnchor.constraint(equalTo: headerBox.topAnchor),
-            headerStack.leadingAnchor.constraint(equalTo: headerBox.leadingAnchor),
-            headerStack.trailingAnchor.constraint(equalTo: headerBox.trailingAnchor),
-            headerStack.bottomAnchor.constraint(equalTo: headerBox.bottomAnchor)
+            summaryStack.topAnchor.constraint(equalTo: summaryBox.topAnchor),
+            summaryStack.leadingAnchor.constraint(equalTo: summaryBox.leadingAnchor),
+            summaryStack.trailingAnchor.constraint(equalTo: summaryBox.trailingAnchor),
+            summaryStack.bottomAnchor.constraint(equalTo: summaryBox.bottomAnchor)
         ])
         
-        rootStack.addArrangedSubview(headerBox)
+        rootStack.addArrangedSubview(summaryBox)
+        NSLayoutConstraint.activate([summaryBox.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
         
-        // --- Project Selection (Redesigned) ---
+        // --- Project Selection ---
         let projBox = NSBox()
         projBox.boxType = .custom
-        projBox.titlePosition = .noTitle
         projBox.fillColor = NSColor.black.withAlphaComponent(0.2)
         projBox.cornerRadius = 12
         projBox.borderWidth = 1
@@ -185,16 +223,7 @@ class GitTrackerController: NSViewController {
             let iconImg = NSImageView(image: img)
             iconImg.contentTintColor = .systemBlue
             repoRow.addArrangedSubview(iconImg)
-        } else {
-            let repoIcon = NSTextField(labelWithString: "📁")
-            repoIcon.font = .systemFont(ofSize: 16)
-            repoRow.addArrangedSubview(repoIcon)
         }
-        
-        let repoLabel = NSTextField(labelWithString: "Repository")
-        repoLabel.font = .systemFont(ofSize: 13, weight: .bold)
-        repoLabel.textColor = .secondaryLabelColor
-        repoRow.addArrangedSubview(repoLabel)
         
         repoPicker = NSPopUpButton(frame: .zero, pullsDown: false)
         repoPicker.target = self
@@ -203,17 +232,16 @@ class GitTrackerController: NSViewController {
         repoPicker.font = .systemFont(ofSize: 14, weight: .semibold)
         repoRow.addArrangedSubview(repoPicker)
         
-        // Push buttons to right
         repoRow.addArrangedSubview(NSView())
         repoRow.arrangedSubviews.last?.setContentHuggingPriority(.defaultLow, for: .horizontal)
         
         let addBtn = createBtn(title: "Add", symbol: "plus", action: #selector(didTrack))
-        addBtn.controlSize = .small
+        addBtn.bezelStyle = .inline
         addBtn.contentTintColor = .systemBlue
         repoRow.addArrangedSubview(addBtn)
         
         let removeBtn = createBtn(title: "Remove", symbol: "minus", action: #selector(didClear))
-        removeBtn.controlSize = .small
+        removeBtn.bezelStyle = .inline
         removeBtn.contentTintColor = .systemRed
         repoRow.addArrangedSubview(removeBtn)
         
@@ -229,16 +257,7 @@ class GitTrackerController: NSViewController {
             let iconImg = NSImageView(image: img)
             iconImg.contentTintColor = .systemTeal
             branchRow.addArrangedSubview(iconImg)
-        } else {
-            let branchIcon = NSTextField(labelWithString: "🌿")
-            branchIcon.font = .systemFont(ofSize: 16)
-            branchRow.addArrangedSubview(branchIcon)
         }
-        
-        let branchLabel = NSTextField(labelWithString: "Branch")
-        branchLabel.font = .systemFont(ofSize: 13, weight: .bold)
-        branchLabel.textColor = .secondaryLabelColor
-        branchRow.addArrangedSubview(branchLabel)
         
         branchPicker = NSPopUpButton(frame: .zero, pullsDown: false)
         branchPicker.target = self
@@ -247,7 +266,7 @@ class GitTrackerController: NSViewController {
         branchPicker.font = .systemFont(ofSize: 14, weight: .semibold)
         branchRow.addArrangedSubview(branchPicker)
         
-        branchRow.addArrangedSubview(NSView()) // Spacer to push status right
+        branchRow.addArrangedSubview(NSView())
         branchRow.arrangedSubviews.last?.setContentHuggingPriority(.defaultLow, for: .horizontal)
         
         branchStatusLabel = NSTextField(labelWithString: "")
@@ -266,18 +285,13 @@ class GitTrackerController: NSViewController {
         ])
         
         rootStack.addArrangedSubview(projBox)
-        
-        // Ensure Project Box spans full width minus padding
-        NSLayoutConstraint.activate([
-            projBox.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)
-        ])
+        NSLayoutConstraint.activate([projBox.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
 
         let commitTitle = NSTextField(labelWithString: "COMMIT HISTORY")
         commitTitle.font = .systemFont(ofSize: 12, weight: .black)
         commitTitle.textColor = .secondaryLabelColor
         rootStack.addArrangedSubview(commitTitle)
         
-        // --- Scrollable Area ---
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
@@ -289,7 +303,7 @@ class GitTrackerController: NSViewController {
         
         commitStack = FlippedStackView()
         commitStack.orientation = .vertical
-        commitStack.spacing = 0 // Critical for graph connecting lines
+        commitStack.spacing = 0
         commitStack.alignment = .leading
         commitStack.translatesAutoresizingMaskIntoConstraints = false
         
@@ -303,19 +317,15 @@ class GitTrackerController: NSViewController {
         
         scrollView.documentView = docView
         rootStack.addArrangedSubview(scrollView)
-        
-        NSLayoutConstraint.activate([
-            docView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -16)
-        ])
+        NSLayoutConstraint.activate([docView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -16)])
         
         loadRepos()
         loadBranches()
         updateCommits()
         
-        // --- Footer (Redesigned) ---
+        // --- Footer ---
         let footerBox = NSBox()
         footerBox.boxType = .custom
-        footerBox.titlePosition = .noTitle
         footerBox.fillColor = NSColor.black.withAlphaComponent(0.2)
         footerBox.cornerRadius = 12
         footerBox.borderWidth = 1
@@ -328,7 +338,6 @@ class GitTrackerController: NSViewController {
         
         let syncBtn = createBtn(title: "Sync", symbol: "arrow.triangle.2.circlepath", action: #selector(didSync))
         syncBtn.bezelStyle = .texturedRounded
-        syncBtn.contentTintColor = .white
         footer.addArrangedSubview(syncBtn)
         
         let authBtn = createBtn(title: "Auth", symbol: "person.crop.circle.badge.key", action: #selector(didAuth))
@@ -350,19 +359,13 @@ class GitTrackerController: NSViewController {
         ])
         
         rootStack.addArrangedSubview(footerBox)
-        footerBox.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            footerBox.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)
-        ])
+        NSLayoutConstraint.activate([footerBox.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
+        
+        onAction("updateAllStatus")
     }
     
-    @objc func repoChanged() {
-        onAction("repoChanged:\(repoPicker.indexOfSelectedItem)")
-    }
-    
-    @objc func branchChanged() {
-        updateCommits()
-    }
+    @objc func repoChanged() { onAction("repoChanged:\(repoPicker.indexOfSelectedItem)") }
+    @objc func branchChanged() { updateCommits() }
     
     func loadRepos() {
         repoPicker.removeAllItems()
@@ -371,278 +374,137 @@ class GitTrackerController: NSViewController {
             repoPicker.isEnabled = false
         } else {
             repoPicker.isEnabled = true
-            let titles = config.repos.map { $0.name }
-            repoPicker.addItems(withTitles: titles)
-            if config.selectedRepoIndex >= 0 && config.selectedRepoIndex < config.repos.count {
-                repoPicker.selectItem(at: config.selectedRepoIndex)
-            }
+            repoPicker.addItems(withTitles: config.repos.map { $0.name })
+            if config.selectedRepoIndex < config.repos.count { repoPicker.selectItem(at: config.selectedRepoIndex) }
         }
     }
     
     func loadBranches() {
         branchPicker.removeAllItems()
         guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else {
-            branchPicker.addItem(withTitle: "N/A")
-            branchPicker.isEnabled = false
-            return
+            branchPicker.addItem(withTitle: "N/A"); branchPicker.isEnabled = false; return
         }
-        
         branchPicker.isEnabled = true
         let out = runGit(args: ["-C", currentRepo.path, "branch", "-a", "--format=%(refname:short)"])
         var branches = ["All Branches"]
         for b in out.components(separatedBy: "\n") {
             let clean = b.trimmingCharacters(in: .whitespaces)
             if !clean.isEmpty && clean != "HEAD" && !clean.hasSuffix("/HEAD") {
-                let displayName = clean.replacingOccurrences(of: "origin/", with: "")
-                if !branches.contains(displayName) {
-                    branches.append(displayName)
-                }
+                let name = clean.replacingOccurrences(of: "origin/", with: "")
+                if !branches.contains(name) { branches.append(name) }
             }
         }
-        
-        branchPicker.addItems(withTitles: branches)
-        branchPicker.selectItem(at: 0)
+        branchPicker.addItems(withTitles: branches); branchPicker.selectItem(at: 0)
     }
     
     func updateCommits() {
         commitStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else {
-            let label = NSTextField(labelWithString: "Please add a repository to track.")
-            label.textColor = .secondaryLabelColor
-            commitStack.addArrangedSubview(label)
-            return
-        }
+        guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else { return }
         
-        var gitArgs = ["-C", currentRepo.path, "log", "-n", "100", "--pretty=format:%h|%s|%ar|%an|%D"]
-        if branchPicker.isEnabled && branchPicker.indexOfSelectedItem > 0 {
+        var args = ["-C", currentRepo.path, "log", "-n", "100", "--pretty=format:%h|%s|%ar|%an|%D"]
+        if branchPicker.indexOfSelectedItem > 0 {
             let sel = branchPicker.titleOfSelectedItem!
-            let localCheck = runGit(args: ["-C", currentRepo.path, "rev-parse", "--verify", sel])
-            if localCheck.isEmpty {
-                gitArgs.insert("origin/\(sel)", at: 3)
-            } else {
-                gitArgs.insert(sel, at: 3)
-            }
-        } else {
-            gitArgs.insert("--all", at: 3)
-        }
+            let check = runGit(args: ["-C", currentRepo.path, "rev-parse", "--verify", sel])
+            args.insert(check.isEmpty ? "origin/\(sel)" : sel, at: 3)
+        } else { args.insert("--all", at: 3) }
         
-        let log = runGit(args: gitArgs)
-        let lines = log.components(separatedBy: "\n")
-        
-        var validLines = [String]()
-        for line in lines where !line.isEmpty {
-            validLines.append(line)
-        }
-        
-        if validLines.isEmpty {
-            let label = NSTextField(labelWithString: "No commits found on this branch.")
-            label.textColor = .secondaryLabelColor
-            commitStack.addArrangedSubview(label)
+        let lines = runGit(args: args).components(separatedBy: "\n").filter { !$0.isEmpty }
+        if lines.isEmpty {
+            commitStack.addArrangedSubview(NSTextField(labelWithString: "No commits found."))
             return
         }
         
-        for (index, line) in validLines.enumerated() {
+        for (index, line) in lines.enumerated() {
             let parts = line.components(separatedBy: "|")
             if parts.count >= 4 {
-                let row = createCommitRow(
-                    hash: parts[0], 
-                    msg: parts[1], 
-                    time: parts[2], 
-                    author: parts[3], 
-                    deco: parts.count > 4 ? parts[4] : "",
-                    isLast: index == validLines.count - 1
-                )
-                commitStack.addArrangedSubview(row)
+                let deco = parts.count > 4 ? parts[4] : ""
+                let color = getBranchColor(deco: deco)
+                commitStack.addArrangedSubview(createCommitRow(hash: parts[0], msg: parts[1], time: parts[2], author: parts[3], deco: deco, color: color, isLast: index == lines.count - 1))
             }
         }
-        
         updateBranchStatus(path: currentRepo.path)
+    }
+    
+    func getBranchColor(deco: String) -> NSColor {
+        if deco.contains("main") || deco.contains("master") { return .systemGreen }
+        if deco.contains("dev") || deco.contains("develop") { return .systemPurple }
+        if deco.contains("feature") { return .systemTeal }
+        return .systemBlue
     }
     
     func updateBranchStatus(path: String) {
         if branchStatusLabel == nil { return }
-        var statusParts = [String]()
-        
-        // Check for uncommitted changes
-        let statusOut = runGit(args: ["-C", path, "status", "--porcelain"])
-        if !statusOut.isEmpty {
-            statusParts.append("✏️ Dirty")
-        }
-        
-        // Check ahead/behind
-        let revListOut = runGit(args: ["-C", path, "rev-list", "--left-right", "--count", "HEAD...@{u}"])
-        if !revListOut.isEmpty && !revListOut.hasPrefix("fatal") {
-            let counts = revListOut.components(separatedBy: .whitespaces)
-            if counts.count == 2 {
-                if let ahead = Int(counts[0]), ahead > 0 {
-                    statusParts.append("↑ \(ahead)")
-                }
-                if let behind = Int(counts[1]), behind > 0 {
-                    statusParts.append("↓ \(behind)")
-                }
-            }
-        }
-        
-        if statusParts.isEmpty {
-            branchStatusLabel.stringValue = "✓ Clean"
-            branchStatusLabel.textColor = .secondaryLabelColor
+        let status = getRepoStatus(path: path)
+        if status.3 { 
+            branchStatusLabel.stringValue = "✓ Clean"; branchStatusLabel.textColor = .secondaryLabelColor
         } else {
-            branchStatusLabel.stringValue = statusParts.joined(separator: "  ")
+            var parts = [String]()
+            if status.0 { parts.append("✏️ Dirty") }
+            if status.1 > 0 { parts.append("↑ \(status.1)") }
+            if status.2 > 0 { parts.append("↓ \(status.2)") }
+            branchStatusLabel.stringValue = parts.joined(separator: "  ")
             branchStatusLabel.textColor = .systemOrange
         }
     }
     
-    func createCommitRow(hash: String, msg: String, time: String, author: String, deco: String, isLast: Bool) -> NSView {
-        let row = NSStackView()
-        row.spacing = 16
-        row.alignment = .top
-        row.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
-        
-        // --- Graph Column ---
-        let graphContainer = NSView()
-        graphContainer.translatesAutoresizingMaskIntoConstraints = false
-        graphContainer.widthAnchor.constraint(equalToConstant: 24).isActive = true
-        
-        // Vertical Line
-        let line = NSBox()
-        line.boxType = .custom
-        line.titlePosition = .noTitle
-        line.fillColor = NSColor.white.withAlphaComponent(0.15)
-        line.borderWidth = 0
-        graphContainer.addSubview(line)
-        line.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            line.centerXAnchor.constraint(equalTo: graphContainer.centerXAnchor),
-            line.topAnchor.constraint(equalTo: graphContainer.topAnchor),
-            line.widthAnchor.constraint(equalToConstant: 2)
-        ])
-        
-        if !isLast {
-            line.bottomAnchor.constraint(equalTo: graphContainer.bottomAnchor).isActive = true
-        } else {
-            line.heightAnchor.constraint(equalToConstant: 20).isActive = true
+    func getRepoStatus(path: String) -> (Bool, Int, Int, Bool) {
+        let dirty = !runGit(args: ["-C", path, "status", "--porcelain"]).isEmpty
+        let revList = runGit(args: ["-C", path, "rev-list", "--left-right", "--count", "HEAD...@{u}"])
+        var ahead = 0, behind = 0
+        if !revList.isEmpty && !revList.hasPrefix("fatal") {
+            let counts = revList.components(separatedBy: .whitespaces)
+            if counts.count == 2 { ahead = Int(counts[0]) ?? 0; behind = Int(counts[1]) ?? 0 }
         }
-        
-        // Dot
-        let dot = NSBox()
-        dot.boxType = .custom
-        dot.titlePosition = .noTitle
-        dot.fillColor = NSColor.systemBlue
-        dot.cornerRadius = 6
-        dot.borderWidth = 2
-        dot.borderColor = NSColor.windowBackgroundColor
-        graphContainer.addSubview(dot)
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            dot.centerXAnchor.constraint(equalTo: graphContainer.centerXAnchor),
-            dot.topAnchor.constraint(equalTo: graphContainer.topAnchor, constant: 14),
-            dot.widthAnchor.constraint(equalToConstant: 12),
-            dot.heightAnchor.constraint(equalToConstant: 12)
-        ])
-        
-        // --- Content Column ---
-        let content = NSStackView()
-        content.orientation = .vertical
-        content.alignment = .leading
-        content.spacing = 6
-        content.edgeInsets = NSEdgeInsets(top: 10, left: 0, bottom: 16, right: 0)
-        
-        let msgStack = NSStackView()
-        msgStack.spacing = 8
-        msgStack.alignment = .centerY
-        
+        return (dirty, ahead, behind, !dirty && ahead == 0 && behind == 0)
+    }
+
+    func createCommitRow(hash: String, msg: String, time: String, author: String, deco: String, color: NSColor, isLast: Bool) -> NSView {
+        let row = NSStackView(); row.spacing = 16; row.alignment = .top; row.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        let graph = NSView(); graph.translatesAutoresizingMaskIntoConstraints = false; graph.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        let line = NSBox(); line.boxType = .custom; line.fillColor = NSColor.white.withAlphaComponent(0.15); line.borderWidth = 0
+        graph.addSubview(line); line.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([line.centerXAnchor.constraint(equalTo: graph.centerXAnchor), line.topAnchor.constraint(equalTo: graph.topAnchor), line.widthAnchor.constraint(equalToConstant: 2)])
+        if !isLast { line.bottomAnchor.constraint(equalTo: graph.bottomAnchor).isActive = true } else { line.heightAnchor.constraint(equalToConstant: 20).isActive = true }
+        let dot = NSBox(); dot.boxType = .custom; dot.fillColor = color; dot.cornerRadius = 6; dot.borderWidth = 2; dot.borderColor = NSColor.windowBackgroundColor
+        graph.addSubview(dot); dot.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([dot.centerXAnchor.constraint(equalTo: graph.centerXAnchor), dot.topAnchor.constraint(equalTo: graph.topAnchor, constant: 14), dot.widthAnchor.constraint(equalToConstant: 12), dot.heightAnchor.constraint(equalToConstant: 12)])
+        let content = NSStackView(); content.orientation = .vertical; content.alignment = .leading; content.spacing = 6; content.edgeInsets = NSEdgeInsets(top: 10, left: 0, bottom: 16, right: 0)
+        let msgStack = NSStackView(); msgStack.spacing = 8; msgStack.alignment = .centerY
         if !deco.isEmpty {
-            let cleanDeco = deco.replacingOccurrences(of: "HEAD -> ", with: "")
-            let branches = cleanDeco.components(separatedBy: ", ")
+            let branches = deco.replacingOccurrences(of: "HEAD -> ", with: "").components(separatedBy: ", ")
             for b in branches {
                 let name = b.trimmingCharacters(in: .whitespaces)
                 if !name.isEmpty {
-                    let isTag = name.hasPrefix("tag: ")
-                    let cleanName = name.replacingOccurrences(of: "tag: ", with: "")
-                    let color = isTag ? NSColor.systemOrange.withAlphaComponent(0.6) : NSColor.systemTeal.withAlphaComponent(0.6)
-                    msgStack.addArrangedSubview(createPill(text: cleanName, color: color))
+                    let isTag = name.hasPrefix("tag: "); let clean = name.replacingOccurrences(of: "tag: ", with: "")
+                    let pColor = isTag ? NSColor.systemOrange : (clean == "main" || clean == "master" ? .systemGreen : .systemTeal)
+                    msgStack.addArrangedSubview(createPill(text: clean, color: pColor.withAlphaComponent(0.6)))
                 }
             }
         }
-        
-        let m = NSTextField(labelWithString: msg)
-        m.font = .systemFont(ofSize: 14, weight: .semibold)
-        m.lineBreakMode = .byWordWrapping
-        m.maximumNumberOfLines = 0
-        m.textColor = .white
-        m.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        msgStack.addArrangedSubview(m)
-        
-        let infoStack = NSStackView()
-        infoStack.orientation = .horizontal
-        infoStack.alignment = .centerY
-        infoStack.spacing = 4
-        
+        let m = NSTextField(labelWithString: msg); m.font = .systemFont(ofSize: 14, weight: .semibold); m.lineBreakMode = .byWordWrapping; m.maximumNumberOfLines = 0; m.textColor = .white; m.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        msgStack.addArrangedSubview(m); let info = NSStackView(); info.spacing = 4; info.alignment = .centerY
         if #available(macOS 11.0, *), let img = NSImage(systemSymbolName: "person.fill", accessibilityDescription: nil) {
-            let iconImg = NSImageView(image: img)
-            iconImg.contentTintColor = .secondaryLabelColor
-            let config = NSImage.SymbolConfiguration(scale: .small)
-            iconImg.symbolConfiguration = config
-            infoStack.addArrangedSubview(iconImg)
-        } else {
-            let icon = NSTextField(labelWithString: "👤")
-            icon.font = .systemFont(ofSize: 10)
-            icon.textColor = .secondaryLabelColor
-            infoStack.addArrangedSubview(icon)
+            let iv = NSImageView(image: img); iv.contentTintColor = .secondaryLabelColor; iv.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small); info.addArrangedSubview(iv)
         }
-        
-        let info = NSTextField(labelWithString: "\(author) • \(hash) • \(time)")
-        info.font = .systemFont(ofSize: 11)
-        info.textColor = .secondaryLabelColor
-        infoStack.addArrangedSubview(info)
-        
-        content.addArrangedSubview(msgStack)
-        content.addArrangedSubview(infoStack)
-        
-        row.addArrangedSubview(graphContainer)
-        row.addArrangedSubview(content)
-        
-        graphContainer.bottomAnchor.constraint(equalTo: content.bottomAnchor).isActive = true
-        
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.widthAnchor.constraint(equalToConstant: 400).isActive = true
-        
+        let it = NSTextField(labelWithString: "\(author) • \(hash) • \(time)"); it.font = .systemFont(ofSize: 11); it.textColor = .secondaryLabelColor; info.addArrangedSubview(it)
+        content.addArrangedSubview(msgStack); content.addArrangedSubview(info); row.addArrangedSubview(graph); row.addArrangedSubview(content)
+        graph.bottomAnchor.constraint(equalTo: content.bottomAnchor).isActive = true; row.translatesAutoresizingMaskIntoConstraints = false; row.widthAnchor.constraint(equalToConstant: 400).isActive = true
         return row
     }
     
     func createPill(text: String, color: NSColor) -> NSView {
-        let f = NSTextField(labelWithString: text)
-        f.font = .systemFont(ofSize: 10, weight: .bold)
-        f.textColor = .white
-        let b = NSBox()
-        b.boxType = .custom
-        b.titlePosition = .noTitle
-        b.fillColor = color
-        b.cornerRadius = 4
-        b.borderWidth = 0
-        b.addSubview(f)
+        let f = NSTextField(labelWithString: text); f.font = .systemFont(ofSize: 10, weight: .bold); f.textColor = .white
+        let b = NSBox(); b.boxType = .custom; b.fillColor = color; b.cornerRadius = 4; b.borderWidth = 0; b.addSubview(f)
         f.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            f.centerXAnchor.constraint(equalTo: b.centerXAnchor),
-            f.centerYAnchor.constraint(equalTo: b.centerYAnchor),
-            b.heightAnchor.constraint(equalToConstant: 18),
-            b.widthAnchor.constraint(equalTo: f.widthAnchor, constant: 12)
-        ])
+        NSLayoutConstraint.activate([f.centerXAnchor.constraint(equalTo: b.centerXAnchor), f.centerYAnchor.constraint(equalTo: b.centerYAnchor), b.heightAnchor.constraint(equalToConstant: 18), b.widthAnchor.constraint(equalTo: f.widthAnchor, constant: 12)])
         return b
     }
     
     func createBtn(title: String, symbol: String? = nil, action: Selector) -> NSButton {
-        let b = NSButton(title: title, target: self, action: action)
-        b.bezelStyle = .recessed
-        b.controlSize = .regular
-        
+        let b = NSButton(title: title, target: self, action: action); b.bezelStyle = .recessed; b.controlSize = .regular
         if #available(macOS 11.0, *), let sym = symbol, let img = NSImage(systemSymbolName: sym, accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(scale: .medium)
-            img.isTemplate = true
-            b.image = img.withSymbolConfiguration(config)
-            b.imagePosition = .imageLeft
+            img.isTemplate = true; b.image = img.withSymbolConfiguration(NSImage.SymbolConfiguration(scale: .medium)); b.imagePosition = .imageLeft
         }
-        
         return b
     }
     
@@ -653,14 +515,9 @@ class GitTrackerController: NSViewController {
     @objc func didQuit() { onAction("quit") }
     
     func runGit(args: [String]) -> String {
-        let task = Process()
-        task.launchPath = "/usr/bin/git"
-        task.arguments = args
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.launch()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = args
+        let pipe = Pipe(); task.standardOutput = pipe; task.launch(); task.waitUntilExit()
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 }
 
@@ -670,27 +527,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var config = Config()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        migrateConfig()
-        loadConfig()
+        migrateConfig(); loadConfig()
         if let b = statusItem.button { 
             if #available(macOS 11.0, *), let img = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil) {
-                img.isTemplate = true
-                b.image = img
-            } else {
-                b.title = "ᚠ"
-            }
-            b.action = #selector(togglePopover)
-            b.target = self 
+                img.isTemplate = true; b.image = img
+            } else { b.title = "ᚠ" }
+            b.action = #selector(togglePopover); b.target = self 
         }
         popover.contentViewController = GitTrackerController(config: config, onAction: handleAction)
-        popover.behavior = .transient
-        setupEditMenu()
+        popover.behavior = .transient; setupEditMenu()
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in self.updateAllStatus() }
     }
     
     func setupEditMenu() {
-        let m = NSMenu(); let e = NSMenu(title: "Edit")
-        e.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        let i = NSMenuItem(); i.submenu = e; m.addItem(i); NSApp.mainMenu = m
+        let m = NSMenu(); let e = NSMenu(title: "Edit"); e.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"); let i = NSMenuItem(); i.submenu = e; m.addItem(i); NSApp.mainMenu = m
     }
     
     @objc func togglePopover() {
@@ -700,19 +550,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             popover.contentViewController?.view.window?.makeKey()
             (popover.contentViewController as? GitTrackerController)?.loadBranches()
             (popover.contentViewController as? GitTrackerController)?.updateCommits()
+            updateAllStatus()
         }
     }
     
     func handleAction(_ type: String) {
         if type.hasPrefix("repoChanged:") {
             if let index = Int(type.replacingOccurrences(of: "repoChanged:", with: "")) {
-                config.selectedRepoIndex = index
-                saveConfig()
-                reloadUI()
+                config.selectedRepoIndex = index; saveConfig(); reloadUI()
             }
             return
         }
-        
+        if type == "updateAllStatus" { updateAllStatus(); return }
         switch type {
         case "sync": refreshRepo()
         case "track": promptForRepo()
@@ -723,193 +572,122 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    func setStatus(_ text: String, color: NSColor = .secondaryLabelColor) {
-        DispatchQueue.main.async {
-            if let vc = self.popover.contentViewController as? GitTrackerController {
-                vc.statusLabel.stringValue = text
-                vc.statusLabel.textColor = color
-            }
-        }
-    }
-
-    func promptForAuth() {
-        let a = NSAlert()
-        a.messageText = "GitHub Credentials"
-        let v = NSStackView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
-        v.orientation = .vertical; v.spacing = 8
-        let userT = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        userT.placeholderString = "Username"
-        userT.stringValue = config.username ?? ""
-        let tokenT = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        tokenT.placeholderString = "PAT Token"
-        tokenT.stringValue = config.token ?? ""
-        v.addArrangedSubview(userT); v.addArrangedSubview(tokenT)
-        a.accessoryView = v
-        a.addButton(withTitle: "Save"); a.addButton(withTitle: "Cancel")
-        if a.runModal() == .alertFirstButtonReturn {
-            config.username = userT.stringValue.trimmingCharacters(in: .whitespaces)
-            config.token = tokenT.stringValue.trimmingCharacters(in: .whitespaces)
-            saveConfig(); reloadUI()
-        }
-    }
-
-    func promptForRepo() {
-        let a = NSAlert()
-        a.messageText = "Add Repository"
-        let t = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        t.placeholderString = "HTTPS URL or local folder path"
-        a.accessoryView = t
-        a.addButton(withTitle: "Add")
-        a.addButton(withTitle: "Choose Local Folder...")
-        a.addButton(withTitle: "Cancel")
-        
-        let response = a.runModal()
-        
-        if response == .alertFirstButtonReturn { 
-            trackRepo(input: t.stringValue.trimmingCharacters(in: .whitespaces)) 
-        } else if response == .alertSecondButtonReturn {
-            let panel = NSOpenPanel()
-            panel.canChooseFiles = false
-            panel.canChooseDirectories = true
-            panel.allowsMultipleSelection = false
-            if panel.runModal() == .OK, let url = panel.url {
-                trackRepo(input: url.path)
-            }
-        }
-    }
-    
-    func trackRepo(input: String) {
-        guard !input.isEmpty else { return }
-        setStatus("⌛ Processing...")
-        
-        let cleanInput = input.replacingOccurrences(of: "file://", with: "")
-        let expanded = (cleanInput as NSString).expandingTildeInPath
-        let repoName = cleanInput.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
-        
-        if FileManager.default.fileExists(atPath: expanded) { 
-            let newRepo = TrackedRepo(url: cleanInput, path: expanded, name: repoName)
-            addAndSelectRepo(newRepo)
-            setStatus("● Local project loaded")
-        } else {
-            let path = "\(trackerRoot)/\(repoName)"
-            let newRepo = TrackedRepo(url: cleanInput, path: path, name: repoName)
-            
-            setStatus("⌛ Cloning...")
-            DispatchQueue.global(qos: .userInitiated).async {
-                var url = cleanInput
-                if let tok = self.config.token, url.contains("github.com") { 
-                    url = url.replacingOccurrences(of: "https://", with: "https://\(tok)@") 
+    func updateAllStatus() {
+        DispatchQueue.global(qos: .background).async {
+            var clean = 0, dirty = 0, ahead = 0, behind = 0, attention = 0
+            for repo in self.config.repos {
+                if !FileManager.default.fileExists(atPath: repo.path) { continue }
+                let s = (self.popover.contentViewController as? GitTrackerController)?.getRepoStatus(path: repo.path) ?? (false, 0, 0, true)
+                if s.3 { clean += 1 } 
+                else {
+                    if s.2 > 0 { behind += 1; attention += 1 }
+                    else if s.1 > 0 { ahead += 1; attention += 1 }
+                    else if s.0 { dirty += 1; attention += 1 }
                 }
-                
-                if FileManager.default.fileExists(atPath: path) { 
-                    try? FileManager.default.removeItem(atPath: path) 
+            }
+            DispatchQueue.main.async {
+                if let vc = self.popover.contentViewController as? GitTrackerController {
+                    vc.summaryBar.update(clean: clean, dirty: dirty, ahead: ahead, behind: behind)
+                    vc.summaryLabel.stringValue = "OVERVIEW: \(attention) REPOS NEED ATTENTION"
                 }
-                
-                let task = Process()
-                task.launchPath = "/usr/bin/git"
-                task.arguments = ["clone", url, path]
-                let errPipe = Pipe()
-                task.standardError = errPipe
-                task.launch()
-                task.waitUntilExit()
-                
-                DispatchQueue.main.async {
-                    if task.terminationStatus == 0 { 
-                        self.addAndSelectRepo(newRepo)
-                        self.setStatus("● Clone successful", color: .systemGreen) 
-                    } else { 
-                        self.setStatus("○ Clone failed", color: .systemRed) 
+                if let b = self.statusItem.button {
+                    if attention > 0 {
+                        if #available(macOS 11.0, *) {
+                            let config = NSImage.SymbolConfiguration(hierarchicalColor: .systemOrange)
+                            b.image = b.image?.withSymbolConfiguration(config)
+                        }
+                    } else {
+                        if #available(macOS 11.0, *) {
+                            b.image = b.image?.withSymbolConfiguration(NSImage.SymbolConfiguration(hierarchicalColor: .controlTextColor))
+                        }
                     }
                 }
             }
         }
     }
     
-    func addAndSelectRepo(_ repo: TrackedRepo) {
-        if !config.repos.contains(where: { $0.path == repo.path }) {
-            config.repos.append(repo)
+    func promptForAuth() {
+        let a = NSAlert(); a.messageText = "GitHub Credentials"
+        let v = NSStackView(frame: NSRect(x: 0, y: 0, width: 300, height: 60)); v.orientation = .vertical; v.spacing = 8
+        let userT = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24)); userT.placeholderString = "Username"; userT.stringValue = config.username ?? ""
+        let tokenT = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24)); tokenT.placeholderString = "PAT Token"; tokenT.stringValue = config.token ?? ""
+        v.addArrangedSubview(userT); v.addArrangedSubview(tokenT); a.accessoryView = v
+        a.addButton(withTitle: "Save"); a.addButton(withTitle: "Cancel")
+        if a.runModal() == .alertFirstButtonReturn { config.username = userT.stringValue.trimmingCharacters(in: .whitespaces); config.token = tokenT.stringValue.trimmingCharacters(in: .whitespaces); saveConfig(); reloadUI() }
+    }
+
+    func promptForRepo() {
+        let a = NSAlert(); a.messageText = "Add Repository"
+        let t = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24)); t.placeholderString = "HTTPS URL or local folder path"; a.accessoryView = t
+        a.addButton(withTitle: "Add"); a.addButton(withTitle: "Choose Local Folder..."); a.addButton(withTitle: "Cancel")
+        let response = a.runModal()
+        if response == .alertFirstButtonReturn { trackRepo(input: t.stringValue.trimmingCharacters(in: .whitespaces)) }
+        else if response == .alertSecondButtonReturn {
+            let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
+            if panel.runModal() == .OK, let url = panel.url { trackRepo(input: url.path) }
         }
+    }
+    
+    func trackRepo(input: String) {
+        guard !input.isEmpty else { return }
+        let cleanInput = input.replacingOccurrences(of: "file://", with: ""), expanded = (cleanInput as NSString).expandingTildeInPath
+        let repoName = cleanInput.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
+        if FileManager.default.fileExists(atPath: expanded) { 
+            addAndSelectRepo(TrackedRepo(url: cleanInput, path: expanded, name: repoName))
+        } else {
+            let path = "\(trackerRoot)/\(repoName)"
+            DispatchQueue.global(qos: .userInitiated).async {
+                var url = cleanInput
+                if let tok = self.config.token, url.contains("github.com") { url = url.replacingOccurrences(of: "https://", with: "https://\(tok)@") }
+                if FileManager.default.fileExists(atPath: path) { try? FileManager.default.removeItem(atPath: path) }
+                let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = ["clone", url, path]
+                task.launch(); task.waitUntilExit()
+                DispatchQueue.main.async { if task.terminationStatus == 0 { self.addAndSelectRepo(TrackedRepo(url: cleanInput, path: path, name: repoName)) } }
+            }
+        }
+    }
+    
+    func addAndSelectRepo(_ repo: TrackedRepo) {
+        if !config.repos.contains(where: { $0.path == repo.path }) { config.repos.append(repo) }
         config.selectedRepoIndex = config.repos.firstIndex(where: { $0.path == repo.path }) ?? 0
-        saveConfig()
-        reloadUI()
+        saveConfig(); reloadUI()
     }
     
     func refreshRepo() {
         guard let currentRepo = config.currentRepo else { return }
-        setStatus("⌛ Syncing...")
         DispatchQueue.global(qos: .userInitiated).async {
-            let fetchTask = Process()
-            fetchTask.launchPath = "/usr/bin/git"
-            fetchTask.arguments = ["-C", currentRepo.path, "fetch", "--all"]
-            fetchTask.launch()
-            fetchTask.waitUntilExit()
-            
-            let pullTask = Process()
-            pullTask.launchPath = "/usr/bin/git"
-            pullTask.arguments = ["-C", currentRepo.path, "pull"]
-            pullTask.launch()
-            pullTask.waitUntilExit()
-            
-            DispatchQueue.main.async { 
-                self.reloadUI()
-                self.setStatus("● Sync complete", color: .systemGreen) 
-            }
+            _ = self.runShell(args: ["-C", currentRepo.path, "fetch", "--all"])
+            _ = self.runShell(args: ["-C", currentRepo.path, "pull"])
+            DispatchQueue.main.async { self.reloadUI(); self.updateAllStatus() }
         }
     }
     
     func clearRepo() { 
-        if !config.repos.isEmpty && config.selectedRepoIndex >= 0 && config.selectedRepoIndex < config.repos.count {
-            config.repos.remove(at: config.selectedRepoIndex)
-            config.selectedRepoIndex = max(0, config.selectedRepoIndex - 1)
-            saveConfig()
-            reloadUI()
-            setStatus("Project removed.")
+        if !config.repos.isEmpty && config.selectedRepoIndex < config.repos.count {
+            config.repos.remove(at: config.selectedRepoIndex); config.selectedRepoIndex = max(0, config.selectedRepoIndex - 1); saveConfig(); reloadUI()
         }
     }
     
     func migrateConfig() {
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            
-            var needsMigration = false
-            var migratedConfig = Config()
-            
-            if let repos = json["repos"] as? [[String: String]] { return }
-            
-            if let repoUrl = json["repoUrl"] as? String, let repoPath = json["repoPath"] as? String {
-                let repoName = repoUrl.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
-                migratedConfig.repos.append(TrackedRepo(url: repoUrl, path: repoPath, name: repoName))
-                needsMigration = true
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if json["repos"] != nil { return }
+            var m = Config()
+            if let url = json["repoUrl"] as? String, let path = json["repoPath"] as? String {
+                let name = url.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
+                m.repos.append(TrackedRepo(url: url, path: path, name: name))
             }
-            
-            if let user = json["username"] as? String { migratedConfig.username = user; needsMigration = true }
-            if let tok = json["token"] as? String { migratedConfig.token = tok; needsMigration = true }
-            
-            if needsMigration {
-                self.config = migratedConfig
-                saveConfig()
-            }
+            if let u = json["username"] as? String { m.username = u }; if let t = json["token"] as? String { m.token = t }
+            self.config = m; saveConfig()
         }
     }
     
-    func loadConfig() { 
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), 
-           let decoded = try? JSONDecoder().decode(Config.self, from: data) { 
-            self.config = decoded 
-        } 
-    }
-    
-    func saveConfig() { 
-        if let data = try? JSONEncoder().encode(config) { 
-            try? data.write(to: URL(fileURLWithPath: configFilePath)) 
-        } 
-    }
-    
-    func reloadUI() { 
-        DispatchQueue.main.async { 
-            self.loadConfig()
-            self.popover.contentViewController = GitTrackerController(config: self.config, onAction: self.handleAction) 
-        } 
+    func loadConfig() { if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let decoded = try? JSONDecoder().decode(Config.self, from: data) { self.config = decoded } }
+    func saveConfig() { if let data = try? JSONEncoder().encode(config) { try? data.write(to: URL(fileURLWithPath: configFilePath)) } }
+    func reloadUI() { DispatchQueue.main.async { self.loadConfig(); self.popover.contentViewController = GitTrackerController(config: self.config, onAction: self.handleAction) } }
+    func runShell(args: [String]) -> String {
+        let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = args
+        let pipe = Pipe(); task.standardOutput = pipe; task.launch(); task.waitUntilExit()
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 }
 
