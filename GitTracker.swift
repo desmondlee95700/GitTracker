@@ -261,7 +261,7 @@ class GitTrackerController: NSViewController {
             selectionHostingView.rootView = ProjectSelectionView(repos: config.repos, selectedRepoIndex: 0, selectedBranch: "N/A", branches: [], status: "Ready", statusColor: .secondary, onRepoChange: { i in self.onAction("repoChanged:\(i)") }, onBranchChange: { _ in }, onAdd: { self.onAction("track") }, onRemove: { self.onAction("clear") })
             return
         }
-        let branchOut = runGit(args: ["-C", currentRepo.path, "branch", "-a", "--format=%(refname:short)"])
+        let branchOut = runGit(args: ["-C", currentRepo.path, "branch", "-a", "--format=%(refname:short)"]).output
         var branches = [String]()
         for b in branchOut.components(separatedBy: "\n") {
             let clean = b.trimmingCharacters(in: .whitespaces)
@@ -278,14 +278,14 @@ class GitTrackerController: NSViewController {
             if repoStatus.2 > 0 { parts.append("↓\(repoStatus.2)") }
             statusStr = parts.joined(separator: " "); statusColor = .orange
         }
-        let currentBranch = runGit(args: ["-C", currentRepo.path, "rev-parse", "--abbrev-ref", "HEAD"])
+        let currentBranch = runGit(args: ["-C", currentRepo.path, "rev-parse", "--abbrev-ref", "HEAD"]).output
         selectionHostingView.rootView = ProjectSelectionView(repos: config.repos, selectedRepoIndex: config.selectedRepoIndex, selectedBranch: currentBranch, branches: branches, status: statusStr, statusColor: statusColor, onRepoChange: { i in self.onAction("repoChanged:\(i)") }, onBranchChange: { b in self.onAction("branchChanged:\(b)") }, onAdd: { self.onAction("track") }, onRemove: { self.onAction("clear") })
         updateCommits()
     }
     
     func updateCommits() {
         guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else { return }
-        let lines = runGit(args: ["-C", currentRepo.path, "log", "-n", "100", "--pretty=format:%h|%s|%ar|%an|%D"]).components(separatedBy: "\n").filter { !$0.isEmpty }
+        let lines = runGit(args: ["-C", currentRepo.path, "log", "-n", "100", "--pretty=format:%h|%s|%ar|%an|%D"]).output.components(separatedBy: "\n").filter { !$0.isEmpty }
         var commits = [Commit]()
         for line in lines {
             let parts = line.components(separatedBy: "|")
@@ -305,8 +305,8 @@ class GitTrackerController: NSViewController {
         return .systemBlue
     }
     func getRepoStatus(path: String) -> (Bool, Int, Int, Bool) {
-        let dirty = !runGit(args: ["-C", path, "status", "--porcelain"]).isEmpty
-        let revList = runGit(args: ["-C", path, "rev-list", "--left-right", "--count", "HEAD...@{u}"])
+        let dirty = !runGit(args: ["-C", path, "status", "--porcelain"]).output.isEmpty
+        let revList = runGit(args: ["-C", path, "rev-list", "--left-right", "--count", "HEAD...@{u}"]).output
         var ahead = 0, behind = 0
         if !revList.isEmpty && !revList.hasPrefix("fatal") {
             let counts = revList.components(separatedBy: .whitespaces)
@@ -322,9 +322,14 @@ class GitTrackerController: NSViewController {
         return b
     }
     @objc func didSync() { onAction("sync") }; @objc func didTrack() { onAction("track") }; @objc func didAuth() { onAction("auth") }; @objc func didClear() { onAction("clear") }; @objc func didQuit() { onAction("quit") }
-    func runGit(args: [String]) -> String {
-        let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = args; let pipe = Pipe(); task.standardOutput = pipe; task.launch(); task.waitUntilExit()
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    
+    @discardableResult
+    func runGit(args: [String]) -> (output: String, success: Bool) {
+        let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = args; let pipe = Pipe(); task.standardOutput = pipe; task.standardError = pipe
+        do { try task.run(); task.waitUntilExit() } catch { return ("", false) }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (output, task.terminationStatus == 0)
     }
 }
 
@@ -347,24 +352,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             (popover.contentViewController as? GitTrackerController)?.updateUIState(); updateAllStatus()
         }
     }
+    @discardableResult
+    func runShell(args: [String]) -> (output: String, success: Bool) {
+        let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = args; let pipe = Pipe(); task.standardOutput = pipe; task.standardError = pipe
+        do { try task.run(); task.waitUntilExit() } catch { return ("", false) }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (output, task.terminationStatus == 0)
+    }
+    
     func handleAction(_ type: String) {
         if type.hasPrefix("repoChanged:") { if let index = Int(type.replacingOccurrences(of: "repoChanged:", with: "")) { config.selectedRepoIndex = index; saveConfig(); reloadUI() }; return }
         if type.hasPrefix("branchChanged:") {
             let branch = type.replacingOccurrences(of: "branchChanged:", with: "")
             if branch != "All Branches", let currentRepo = config.currentRepo {
-                if branch.hasPrefix("origin/") {
-                    let localName = branch.replacingOccurrences(of: "origin/", with: "")
-                    // Try to checkout local, if fails, create tracking branch
-                    let exists = runShell(args: ["-C", currentRepo.path, "show-ref", "--verify", "refs/heads/\(localName)"])
-                    if exists.isEmpty || exists.hasPrefix("fatal") {
-                        _ = runShell(args: ["-C", currentRepo.path, "checkout", "-b", localName, "--track", branch])
+                setStatus("⌛ Checking out...")
+                DispatchQueue.global(qos: .userInitiated).async {
+                    var success = false
+                    if branch.hasPrefix("origin/") {
+                        let localName = branch.replacingOccurrences(of: "origin/", with: "")
+                        let exists = self.runShell(args: ["-C", currentRepo.path, "rev-parse", "--verify", localName]).success
+                        if !exists {
+                            success = self.runShell(args: ["-C", currentRepo.path, "checkout", "-b", localName, "--track", branch]).success
+                        } else {
+                            success = self.runShell(args: ["-C", currentRepo.path, "checkout", localName]).success
+                        }
                     } else {
-                        _ = runShell(args: ["-C", currentRepo.path, "checkout", localName])
+                        success = self.runShell(args: ["-C", currentRepo.path, "checkout", branch]).success
                     }
-                } else {
-                    _ = runShell(args: ["-C", currentRepo.path, "checkout", branch])
+                    DispatchQueue.main.async {
+                        if success { self.reloadUI(status: "✅ Switched to \(branch)") }
+                        else { self.setStatus("❌ Checkout Failed", color: .systemRed) }
+                    }
                 }
-                reloadUI()
             }; return
         }
         if type == "updateAllStatus" { updateAllStatus(); return }
@@ -443,7 +463,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func loadConfig() { if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let decoded = try? JSONDecoder().decode(Config.self, from: data) { self.config = decoded } }
     func saveConfig() { if let data = try? JSONEncoder().encode(config) { try? data.write(to: URL(fileURLWithPath: configFilePath)) } }
     func reloadUI(status: String? = nil) { DispatchQueue.main.async { self.loadConfig(); let vc = GitTrackerController(config: self.config, onAction: self.handleAction); self.popover.contentViewController = vc; if let s = status { self.setStatus(s) } } }
-    func runShell(args: [String]) -> String { let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = args; let pipe = Pipe(); task.standardOutput = pipe; task.launch(); task.waitUntilExit(); return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
 }
 
 let app = NSApplication.shared; let delegate = AppDelegate(); app.delegate = delegate; app.run()
