@@ -200,6 +200,64 @@ struct Config: Codable {
     var currentRepo: TrackedRepo? { if repos.isEmpty { return nil }; return (selectedRepoIndex >= 0 && selectedRepoIndex < repos.count) ? repos[selectedRepoIndex] : repos.first }
 }
 
+struct VisualEffectView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView(); view.blendingMode = .behindWindow; view.state = .active; view.material = .hudWindow; return view
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+struct AuthView: View {
+    @State private var username: String; @State private var token: String
+    var onSave: (String, String) -> Void; var onCancel: () -> Void
+    init(username: String?, token: String?, onSave: @escaping (String, String) -> Void, onCancel: @escaping () -> Void) {
+        _username = State(initialValue: username ?? ""); _token = State(initialValue: token ?? "")
+        self.onSave = onSave; self.onCancel = onCancel
+    }
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("GitHub Credentials").font(.headline)
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("USERNAME").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                    TextField("Username", text: $username).textFieldStyle(.plain).padding(8).background(Color.white.opacity(0.1)).cornerRadius(6)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("PERSONAL ACCESS TOKEN").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                    SecureField("Token", text: $token).textFieldStyle(.plain).padding(8).background(Color.white.opacity(0.1)).cornerRadius(6)
+                }
+            }
+            HStack(spacing: 12) {
+                Button("Cancel", action: onCancel).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.white.opacity(0.1)).cornerRadius(6)
+                Button("Save") { onSave(username, token) }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.blue).foregroundColor(.white).cornerRadius(6)
+            }
+        }.padding(20).frame(width: 280).background(VisualEffectView())
+    }
+}
+
+struct AddRepoView: View {
+    @State private var input: String = ""
+    var onAdd: (String) -> Void; var onBrowse: () -> Void; var onCancel: () -> Void
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Add Repository").font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("HTTPS URL OR LOCAL PATH").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                TextField("https://github.com/...", text: $input).textFieldStyle(.plain).padding(8).background(Color.white.opacity(0.1)).cornerRadius(6)
+            }
+            VStack(spacing: 8) {
+                Button(action: { onAdd(input) }) {
+                    HStack { Image(systemName: "plus.circle.fill"); Text("Add Repository") }.frame(maxWidth: .infinity).padding(.vertical, 8).background(Color.blue).foregroundColor(.white).cornerRadius(8)
+                }.buttonStyle(.plain).disabled(input.isEmpty)
+                Button(action: onBrowse) {
+                    HStack { Image(systemName: "folder.fill"); Text("Choose Local Folder...") }.frame(maxWidth: .infinity).padding(.vertical, 8).background(Color.white.opacity(0.1)).cornerRadius(8)
+                }.buttonStyle(.plain)
+                Button("Cancel", action: onCancel).buttonStyle(.plain).foregroundColor(.secondary).font(.system(size: 11))
+            }
+        }.padding(20).frame(width: 280).background(VisualEffectView())
+    }
+}
+
 class GitTrackerController: NSViewController {
     var config: Config; var onAction: (String) -> Void
     var statusHostingView: NSHostingView<StatusBadgeView>!
@@ -334,9 +392,9 @@ class GitTrackerController: NSViewController {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength); let popover = NSPopover(); var config = Config()
+    let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength); let popover = NSPopover(); let dialogPopover = NSPopover(); var config = Config()
     func applicationDidFinishLaunching(_ notification: Notification) {
-        migrateConfig(); loadConfig()
+        loadConfig()
         
         // Expert UI: Generate App Icon (Blue Background + White Glyph)
         let iconSize = NSSize(width: 128, height: 128)
@@ -433,21 +491,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     func promptForAuth() {
-        let a = NSAlert(); a.messageText = "GitHub Credentials"; let v = NSStackView(frame: NSRect(x: 0, y: 0, width: 300, height: 60)); v.orientation = .vertical; v.spacing = 8
-        let userT = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24)); userT.placeholderString = "Username"; userT.stringValue = config.username ?? ""
-        let tokenT = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24)); tokenT.placeholderString = "PAT Token"; tokenT.stringValue = config.token ?? ""
-        v.addArrangedSubview(userT); v.addArrangedSubview(tokenT); a.accessoryView = v; a.addButton(withTitle: "Save"); a.addButton(withTitle: "Cancel")
-        if a.runModal() == .alertFirstButtonReturn { config.username = userT.stringValue.trimmingCharacters(in: .whitespaces); config.token = tokenT.stringValue.trimmingCharacters(in: .whitespaces); saveConfig(); reloadUI() }
+        let authView = AuthView(username: config.username, token: config.token, onSave: { u, t in
+            self.config.username = u.trimmingCharacters(in: .whitespaces)
+            self.config.token = t.trimmingCharacters(in: .whitespaces)
+            self.saveConfig(); self.reloadUI(); self.dialogPopover.performClose(nil)
+        }, onCancel: { self.dialogPopover.performClose(nil) })
+        dialogPopover.contentViewController = NSHostingController(rootView: authView)
+        if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
     func promptForRepo() {
-        let a = NSAlert(); a.messageText = "Add Repository"; let t = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24)); t.placeholderString = "HTTPS URL or local folder path"; a.accessoryView = t
-        a.addButton(withTitle: "Add"); a.addButton(withTitle: "Choose Local Folder..."); a.addButton(withTitle: "Cancel")
-        let response = a.runModal()
-        if response == .alertFirstButtonReturn { trackRepo(input: t.stringValue.trimmingCharacters(in: .whitespaces)) }
-        else if response == .alertSecondButtonReturn {
+        let addView = AddRepoView(onAdd: { input in
+            self.trackRepo(input: input.trimmingCharacters(in: .whitespaces)); self.dialogPopover.performClose(nil)
+        }, onBrowse: {
+            self.dialogPopover.performClose(nil)
             let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
-            if panel.runModal() == .OK, let url = panel.url { trackRepo(input: url.path) }
-        }
+            if panel.runModal() == .OK, let url = panel.url { self.trackRepo(input: url.path) }
+        }, onCancel: { self.dialogPopover.performClose(nil) })
+        dialogPopover.contentViewController = NSHostingController(rootView: addView)
+        if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
     func trackRepo(input: String) {
         guard !input.isEmpty else { return }; let cleanInput = input.replacingOccurrences(of: "file://", with: ""), expanded = (cleanInput as NSString).expandingTildeInPath; let repoName = cleanInput.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
