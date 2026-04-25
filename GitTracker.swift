@@ -102,34 +102,191 @@ struct StatusBadgeView: View {
 struct CommitDetailView: View {
     let commit: Commit; let repoPath: String; let onBack: () -> Void
     @State private var files: [String] = []; @State private var isLoading = true
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Button(action: onBack) { Image(systemName: "chevron.left").font(.system(size: 14, weight: .bold)).foregroundColor(.blue) }.buttonStyle(.plain)
-                Text("Commit Details").font(.headline); Spacer()
-                Text(commit.hash).font(.system(size: 10, design: .monospaced)).padding(.horizontal, 8).padding(.vertical, 4).background(.ultraThinMaterial).cornerRadius(4)
-            }.padding().background(Color.black.opacity(0.2))
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(commit.message).font(.system(size: 16, weight: .bold)).foregroundColor(.white)
-                        HStack { Image(systemName: "person.circle.fill").symbolRenderingMode(.hierarchical); Text(commit.author); Spacer(); Text(commit.time) }.font(.subheadline).foregroundColor(.secondary)
-                    }.padding(.horizontal)
-                    Divider().padding(.horizontal)
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("CHANGED FILES").font(.system(size: 10, weight: .black)).foregroundColor(.secondary)
-                        if isLoading { ProgressView().scaleEffect(0.5).frame(maxWidth: .infinity) }
-                        else { ForEach(files, id: \.self) { file in HStack { Image(systemName: "doc.fill").symbolRenderingMode(.hierarchical).foregroundColor(.blue); Text(file).font(.system(size: 12, design: .monospaced)) }.padding(.vertical, 4) } }
-                    }.padding(.horizontal)
-                }.padding(.vertical)
+            // Modern Header
+            HStack(spacing: 16) {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left.circle.fill")
+                        .font(.system(size: 24))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(.plain)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Commit Details")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.secondary)
+                    Text(commit.hash.prefix(8))
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundColor(.blue)
+                }
+                Spacer()
+                
+                Button(action: {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(commit.hash, forType: .string)
+                }) {
+                    Image(systemName: "doc.on.doc.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Copy Full Hash")
             }
-        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(.ultraThinMaterial).onAppear(perform: loadFiles)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(Color.black.opacity(0.1))
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    // Commit Message Card
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(commit.message)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.white)
+                            .fixedSize(horizontal: false, vertical: true)
+                        
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(commit.dotColor)
+                                .frame(width: 8, height: 8)
+                                .shadow(color: commit.dotColor.opacity(0.5), radius: 3)
+                            
+                            HStack(spacing: 4) {
+                                Image(systemName: "person.fill")
+                                    .font(.system(size: 10))
+                                Text(commit.author)
+                            }
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.secondary)
+                            
+                            Spacer()
+                            
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock.fill")
+                                    .font(.system(size: 10))
+                                Text(commit.time)
+                            }
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(16)
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.05)))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.05), lineWidth: 1))
+                    .padding(.horizontal, 16)
+                    
+                    // Changed Files Section
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("CHANGED FILES")
+                                .font(.system(size: 11, weight: .black))
+                                .foregroundColor(.secondary)
+                                .kerning(1)
+                            
+                            Spacer()
+                            
+                            if !isLoading {
+                                Text("\(files.count)")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.blue.opacity(0.2))
+                                    .foregroundColor(.blue)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                        .padding(.horizontal, 4)
+                        
+                        if isLoading {
+                            VStack(spacing: 12) {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Analyzing changes...")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
+                        } else {
+                            VStack(spacing: 1) {
+                                ForEach(Array(files.enumerated()), id: \.element) { index, file in
+                                    FileRowView(file: file)
+                                        .background(index % 2 == 0 ? Color.clear : Color.white.opacity(0.02))
+                                }
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.03)))
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .padding(.vertical, 20)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(VisualEffectView())
+        .onAppear(perform: loadFiles)
     }
+    
     func loadFiles() {
-        let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = ["-C", repoPath, "show", "--name-only", "--pretty=format:", commit.hash]
-        let pipe = Pipe(); task.standardOutput = pipe; task.launch()
-        if let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) { self.files = output.components(separatedBy: "\n").filter { !$0.isEmpty } }
-        self.isLoading = false
+        let task = Process()
+        task.launchPath = "/usr/bin/git"
+        task.arguments = ["-C", repoPath, "show", "--name-only", "--pretty=format:", commit.hash]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.launch()
+        
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if let output = String(data: data, encoding: .utf8) {
+            DispatchQueue.main.async {
+                self.files = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+                self.isLoading = false
+            }
+        }
+    }
+}
+
+struct FileRowView: View {
+    let file: String
+    
+    var fileExtension: String {
+        (file as NSString).pathExtension.lowercased()
+    }
+    
+    var fileIcon: (String, Color) {
+        switch fileExtension {
+        case "swift": return ("swift", .orange)
+        case "json": return ("braces", .yellow)
+        case "plist": return ("list.bullet.rectangle.fill", .gray)
+        case "md": return ("text.alignleft", .blue)
+        case "png", "jpg", "jpeg", "svg": return ("photo.fill", .purple)
+        default: return ("doc.fill", .blue)
+        }
+    }
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            let (icon, color) = fileIcon
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundColor(color)
+                .frame(width: 20)
+            
+            Text(file)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(.primary.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 }
 
