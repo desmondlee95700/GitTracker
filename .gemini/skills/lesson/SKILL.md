@@ -39,7 +39,14 @@ This skill documents the critical decisions and technical hurdles encountered du
 - **Problem**: Emojis lack depth and don't adapt to system tinting or font weights.
 - **Solution**: Use **Hierarchical SF Symbols** (e.g., `folder.fill`, `arrow.triangle.branch`) for a native, premium feel.
 
-### 6. SwiftUI-in-AppKit Bridge
+### 6. Branch Color Coding Strategy
+- **Standard**: To improve visual scanning of the commit graph, we use a high-contrast color scheme:
+  - **Green** (`.systemGreen`): Stable/Production branches (`main`, `master`).
+  - **Yellow** (`.systemYellow`): Integration branches (`dev`, `develop`).
+  - **Blue** (`.systemBlue`): Feature branches and all others.
+- **Implementation**: Managed via the `getBranchColor(deco:)` function in `GitTracker.swift`.
+
+### 7. SwiftUI-in-AppKit Bridge
 - **Problem**: Complex list animations and glassmorphism (Material) are difficult in pure AppKit.
 - **Solution**: Use **`NSHostingView`** to embed SwiftUI views within the AppKit architecture.
 - **Pattern**: `let hostingView = NSHostingView(rootView: MySwiftUIView())`.

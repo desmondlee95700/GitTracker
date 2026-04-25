@@ -20,7 +20,7 @@ struct ProjectSelectionView: View {
                 repoDropdown.frame(width: 180); Spacer(); actionButtons
             }
             HStack(spacing: 12) {
-                Image(systemName: "arrow.triangle.branch").foregroundColor(.teal).font(.system(size: 14)).symbolRenderingMode(.hierarchical)
+                Image(systemName: "arrow.triangle.branch").foregroundColor(.blue).font(.system(size: 14)).symbolRenderingMode(.hierarchical)
                 branchDropdown.frame(width: 180); Spacer(); statusPill
             }
         }
@@ -141,8 +141,7 @@ struct CommitRowView: View {
                             let name = branch.trimmingCharacters(in: .whitespaces)
                             if !name.isEmpty {
                                 let isTag = name.hasPrefix("tag: "); let cleanName = name.replacingOccurrences(of: "tag: ", with: "")
-                                Text(cleanName).font(.system(size: 9, weight: .bold, design: .monospaced)).padding(.horizontal, 6).padding(.vertical, 2).background(isTag ? Color.orange.opacity(0.6) : Color.teal.opacity(0.6)).cornerRadius(4).foregroundColor(.white)
-                            }
+                                Text(cleanName).font(.system(size: 9, weight: .bold, design: .monospaced)).padding(.horizontal, 6).padding(.vertical, 2).background(isTag ? Color.orange.opacity(0.6) : Color.blue.opacity(0.6)).cornerRadius(4).foregroundColor(.white)                            }
                         }
                     }
                     Text(commit.message).font(.system(size: 13, weight: .semibold)).lineLimit(1).foregroundColor(.white)
@@ -277,7 +276,7 @@ class GitTrackerController: NSViewController {
     
     func getBranchColor(deco: String) -> NSColor {
         if deco.contains("main") || deco.contains("master") { return .systemGreen }
-        if deco.contains("dev") || deco.contains("develop") { return .systemPurple }
+        if deco.contains("dev") || deco.contains("develop") { return .systemYellow }
         return .systemBlue
     }
     func getRepoStatus(path: String) -> (Bool, Int, Int, Bool) {

@@ -30,7 +30,7 @@ To create a standard `.app` bundle:
 - **Authentication:** Uses GitHub Personal Access Tokens (PAT) passed via URL injection (`https://TOKEN@github.com/...`) or native macOS Keychain integration.
 - **Concurrency:** Git operations are performed on background queues (`DispatchQueue.global(qos: .userInitiated)`) to prevent UI freezing, with UI updates dispatched back to the main thread.
 - **Data Model:** `Config` and `TrackedRepo` structs are used for persistence, implementing the `Codable` protocol for JSON serialization.
-- **Git Graph Rendering:** Implements a custom visual graph using `NSBox` elements for connecting lines and dots, with branch-specific color coding (Main: Green, Dev: Purple, Feature: Teal).
+- **Git Graph Rendering:** Implements a custom visual graph using `NSBox` elements for connecting lines and dots, with branch-specific color coding (Main: Green, Dev: Yellow, Others: Blue).
 
 ## Key Files
 - `GitTracker.swift`: The monolithic source file containing the UI logic, Git command integration, and App Delegate.
