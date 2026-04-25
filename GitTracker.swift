@@ -42,6 +42,7 @@ class GitTrackerController: NSViewController {
     var statusLabel: NSTextField!
     var branchPicker: NSPopUpButton!
     var repoPicker: NSPopUpButton!
+    var branchStatusLabel: NSTextField!
     
     init(config: Config, onAction: @escaping (String) -> Void) {
         self.config = config
@@ -246,6 +247,13 @@ class GitTrackerController: NSViewController {
         branchPicker.font = .systemFont(ofSize: 14, weight: .semibold)
         branchRow.addArrangedSubview(branchPicker)
         
+        branchRow.addArrangedSubview(NSView()) // Spacer to push status right
+        branchRow.arrangedSubviews.last?.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        
+        branchStatusLabel = NSTextField(labelWithString: "")
+        branchStatusLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        branchRow.addArrangedSubview(branchStatusLabel)
+        
         projStack.addArrangedSubview(branchRow)
         
         projBox.addSubview(projStack)
@@ -446,6 +454,41 @@ class GitTrackerController: NSViewController {
                 )
                 commitStack.addArrangedSubview(row)
             }
+        }
+        
+        updateBranchStatus(path: currentRepo.path)
+    }
+    
+    func updateBranchStatus(path: String) {
+        if branchStatusLabel == nil { return }
+        var statusParts = [String]()
+        
+        // Check for uncommitted changes
+        let statusOut = runGit(args: ["-C", path, "status", "--porcelain"])
+        if !statusOut.isEmpty {
+            statusParts.append("✏️ Dirty")
+        }
+        
+        // Check ahead/behind
+        let revListOut = runGit(args: ["-C", path, "rev-list", "--left-right", "--count", "HEAD...@{u}"])
+        if !revListOut.isEmpty && !revListOut.hasPrefix("fatal") {
+            let counts = revListOut.components(separatedBy: .whitespaces)
+            if counts.count == 2 {
+                if let ahead = Int(counts[0]), ahead > 0 {
+                    statusParts.append("↑ \(ahead)")
+                }
+                if let behind = Int(counts[1]), behind > 0 {
+                    statusParts.append("↓ \(behind)")
+                }
+            }
+        }
+        
+        if statusParts.isEmpty {
+            branchStatusLabel.stringValue = "✓ Clean"
+            branchStatusLabel.textColor = .secondaryLabelColor
+        } else {
+            branchStatusLabel.stringValue = statusParts.joined(separator: "  ")
+            branchStatusLabel.textColor = .systemOrange
         }
     }
     
