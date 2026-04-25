@@ -305,7 +305,7 @@ class GitTrackerController: NSViewController {
         let footerBox = NSBox(); footerBox.boxType = .custom; footerBox.fillColor = NSColor.black.withAlphaComponent(0.2); footerBox.cornerRadius = 12; footerBox.borderWidth = 1; footerBox.borderColor = NSColor.white.withAlphaComponent(0.1)
         let footer = NSStackView(); footer.distribution = .fillEqually; footer.spacing = 12; footer.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
         syncBtn = createBtn(title: "Sync", symbol: "arrow.triangle.2.circlepath", action: #selector(didSync)); syncBtn.bezelStyle = .texturedRounded; footer.addArrangedSubview(syncBtn)
-        let authBtn = createBtn(title: "Auth", symbol: "person.crop.circle.badge.key", action: #selector(didAuth)); authBtn.bezelStyle = .texturedRounded; footer.addArrangedSubview(authBtn)
+        let authBtn = createBtn(title: "Auth", symbol: "person.fill", action: #selector(didAuth)); authBtn.bezelStyle = .texturedRounded; footer.addArrangedSubview(authBtn)
         let quitBtn = createBtn(title: "Quit", symbol: "power", action: #selector(didQuit)); quitBtn.bezelStyle = .texturedRounded; quitBtn.contentTintColor = .systemRed; footer.addArrangedSubview(quitBtn)
         footerBox.addSubview(footer); footer.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([footer.topAnchor.constraint(equalTo: footerBox.topAnchor), footer.leadingAnchor.constraint(equalTo: footerBox.leadingAnchor), footer.trailingAnchor.constraint(equalTo: footerBox.trailingAnchor), footer.bottomAnchor.constraint(equalTo: footerBox.bottomAnchor)])
