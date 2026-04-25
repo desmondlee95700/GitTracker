@@ -92,6 +92,7 @@ class GitTrackerController: NSViewController {
     var branchStatusLabel: NSTextField!
     var summaryBar: StackedStatusBar!
     var summaryLabel: NSTextField!
+    var syncBtn: NSButton!
     
     init(config: Config, onAction: @escaping (String) -> Void) {
         self.config = config
@@ -336,7 +337,7 @@ class GitTrackerController: NSViewController {
         footer.spacing = 12
         footer.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
         
-        let syncBtn = createBtn(title: "Sync", symbol: "arrow.triangle.2.circlepath", action: #selector(didSync))
+        syncBtn = createBtn(title: "Sync", symbol: "arrow.triangle.2.circlepath", action: #selector(didSync))
         syncBtn.bezelStyle = .texturedRounded
         footer.addArrangedSubview(syncBtn)
         
@@ -572,6 +573,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    func setStatus(_ text: String, color: NSColor = .secondaryLabelColor) {
+        DispatchQueue.main.async {
+            if let vc = self.popover.contentViewController as? GitTrackerController {
+                vc.statusLabel.stringValue = text
+                vc.statusLabel.textColor = color
+            }
+        }
+    }
+    
     func updateAllStatus() {
         DispatchQueue.global(qos: .background).async {
             var clean = 0, dirty = 0, ahead = 0, behind = 0, attention = 0
@@ -655,10 +665,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func refreshRepo() {
         guard let currentRepo = config.currentRepo else { return }
+        
+        DispatchQueue.main.async {
+            if let vc = self.popover.contentViewController as? GitTrackerController {
+                vc.syncBtn.isEnabled = false
+                vc.syncBtn.title = "Syncing..."
+                self.setStatus("⌛ Syncing \(currentRepo.name)...", color: NSColor.systemBlue)
+            }
+        }
+        
         DispatchQueue.global(qos: .userInitiated).async {
             _ = self.runShell(args: ["-C", currentRepo.path, "fetch", "--all"])
             _ = self.runShell(args: ["-C", currentRepo.path, "pull"])
-            DispatchQueue.main.async { self.reloadUI(); self.updateAllStatus() }
+            
+            DispatchQueue.main.async { 
+                self.reloadUI(status: "✅ Sync Complete", statusColor: NSColor.systemGreen)
+                self.updateAllStatus()
+                
+                // Reset status after 3 seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    let authStatus = self.config.token != nil ? "● Authenticated" : "○ No Auth Set"
+                    self.setStatus(authStatus, color: self.config.token != nil ? NSColor.systemGreen : NSColor.systemRed)
+                }
+            }
         }
     }
     
@@ -683,7 +712,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func loadConfig() { if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let decoded = try? JSONDecoder().decode(Config.self, from: data) { self.config = decoded } }
     func saveConfig() { if let data = try? JSONEncoder().encode(config) { try? data.write(to: URL(fileURLWithPath: configFilePath)) } }
-    func reloadUI() { DispatchQueue.main.async { self.loadConfig(); self.popover.contentViewController = GitTrackerController(config: self.config, onAction: self.handleAction) } }
+    func reloadUI(status: String? = nil, statusColor: NSColor = .secondaryLabelColor) { 
+        DispatchQueue.main.async { 
+            self.loadConfig()
+            let vc = GitTrackerController(config: self.config, onAction: self.handleAction)
+            self.popover.contentViewController = vc
+            if let s = status {
+                vc.statusLabel.stringValue = s
+                vc.statusLabel.textColor = statusColor
+            }
+        } 
+    }
     func runShell(args: [String]) -> String {
         let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = args
         let pipe = Pipe(); task.standardOutput = pipe; task.launch(); task.waitUntilExit()
