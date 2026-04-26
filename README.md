@@ -1,4 +1,4 @@
-# GitTracker v3.0
+# GitTracker v3.1
 
 GitTracker is a beautiful, native macOS menu bar app designed to help you track multiple local and remote Git repositories from one place. It offers a sleek, modern interface, a visual Git graph, and simple authentication for private GitHub repositories.
 
@@ -16,28 +16,34 @@ GitTracker is a beautiful, native macOS menu bar app designed to help you track 
 ## Installation
 
 ### Prerequisites
+
 - macOS 11.0 (Big Sur) or newer.
 - Swift toolchain installed (via Xcode Command Line Tools).
 
 ### Build from Source
+
 1. Clone this repository to your local machine:
+
    ```bash
    git clone https://github.com/desmondlee95700/GitTracker.git
    cd GitTracker
    ```
 
 2. Compile the Swift file into an executable:
+
    ```bash
    swiftc GitTracker.swift -o GitTracker
    ```
 
 3. Create the standard macOS Application bundle structure:
+
    ```bash
    mkdir -p GitTracker.app/Contents/MacOS
    cp GitTracker GitTracker.app/Contents/MacOS/
    ```
 
-4. *(Optional)* Create an `Info.plist` inside `GitTracker.app/Contents/` to hide the dock icon:
+4. _(Optional)_ Create an `Info.plist` inside `GitTracker.app/Contents/` to hide the dock icon:
+
    ```xml
    <?xml version="1.0" encoding="UTF-8"?>
    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -52,6 +58,7 @@ GitTracker is a beautiful, native macOS menu bar app designed to help you track 
    ```
 
 5. Move it to your Applications folder:
+
    ```bash
    mv GitTracker.app /Applications/
    ```
@@ -68,6 +75,7 @@ GitTracker is a beautiful, native macOS menu bar app designed to help you track 
 ## How it Works
 
 GitTracker acts as a lightweight wrapper around your local `git` installation.
+
 - When tracking a remote URL, GitTracker clones a background copy to `~/Documents/sidehustle/GitTrackerTracker`.
 - When tracking a local folder, GitTracker simply reads the `.git` data from that folder directly.
 - All configuration (including your PAT) is stored locally in `config.json` in the tracker directory. This file is intentionally `.gitignore`d.
