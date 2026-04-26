@@ -866,7 +866,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func setupEditMenu() { let m = NSMenu(); let e = NSMenu(title: "Edit"); e.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"); let i = NSMenuItem(); i.submenu = e; m.addItem(i); NSApp.mainMenu = m }
     @objc func togglePopover() {
         if popover.isShown { popover.performClose(nil) }
-        else if let b = statusItem.button {
+        else { showPopover() }
+    }
+    func showPopover() {
+        if let b = statusItem.button {
             popover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY); popover.contentViewController?.view.window?.makeKey()
             (popover.contentViewController as? GitTrackerController)?.updateUIState(); updateAllStatus()
         }
@@ -907,10 +910,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         if success {
                             let stashList = self.runShell(args: ["-C", currentRepo.path, "stash", "list", "-n", "1"]).output
                             if stashList.contains("Auto-stashed before checkout") {
-                                self.reloadUI(status: "✅ Switched to \(branch)")
+                                self.reloadUI(status: "✅ Switched to \(branch)", show: true)
                                 self.promptForStashPop()
                             } else {
-                                self.reloadUI(status: "✅ Switched to \(branch)")
+                                self.reloadUI(status: "✅ Switched to \(branch)", show: true)
                             }
                         } else {
                             if output.contains("stash them before you switch branches") || output.contains("would be overwritten by checkout") {
@@ -932,7 +935,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     func setStatus(_ text: String, color: NSColor = .secondaryLabelColor) {
-        DispatchQueue.main.async { if let vc = self.popover.contentViewController as? GitTrackerController { vc.statusHostingView.rootView = StatusBadgeView(isActive: self.config.token != nil, text: text) } }
+        DispatchQueue.main.async { 
+            if let vc = self.popover.contentViewController as? GitTrackerController { 
+                vc.statusHostingView.rootView = StatusBadgeView(isActive: self.config.token != nil, text: text) 
+            }
+            if text.contains("❌") { self.showPopover() }
+        }
     }
     func updateAllStatus() {
         DispatchQueue.global(qos: .background).async {
@@ -959,6 +967,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.config.token = t.trimmingCharacters(in: .whitespaces)
             self.saveConfig(); self.reloadUI(); self.dialogPopover.performClose(nil)
         }, onCancel: { self.dialogPopover.performClose(nil) })
+        self.popover.performClose(nil)
         dialogPopover.contentViewController = NSHostingController(rootView: authView)
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
@@ -970,6 +979,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
             if panel.runModal() == .OK, let url = panel.url { self.trackRepo(input: url.path) }
         }, onCancel: { self.dialogPopover.performClose(nil) })
+        self.popover.performClose(nil)
         dialogPopover.contentViewController = NSHostingController(rootView: addView)
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
@@ -985,13 +995,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
-    func addAndSelectRepo(_ repo: TrackedRepo) { if !config.repos.contains(where: { $0.path == repo.path }) { config.repos.append(repo) }; config.selectedRepoIndex = config.repos.firstIndex(where: { $0.path == repo.path }) ?? 0; saveConfig(); reloadUI() }
+    func addAndSelectRepo(_ repo: TrackedRepo) { if !config.repos.contains(where: { $0.path == repo.path }) { config.repos.append(repo) }; config.selectedRepoIndex = config.repos.firstIndex(where: { $0.path == repo.path }) ?? 0; saveConfig(); reloadUI(show: true) }
     func refreshRepo() {
         guard let currentRepo = config.currentRepo else { return }
         DispatchQueue.main.async { if let vc = self.popover.contentViewController as? GitTrackerController { vc.syncBtn.isEnabled = false; vc.syncBtn.title = "Fetching..."; self.setStatus("⌛ Fetching...") } }
         DispatchQueue.global(qos: .userInitiated).async {
             _ = self.runShell(args: ["-C", currentRepo.path, "fetch", "--all"]); _ = self.runShell(args: ["-C", currentRepo.path, "pull"])
-            DispatchQueue.main.async { self.reloadUI(status: "✅ Fetch Complete"); self.updateAllStatus(); DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.setStatus("Auth Active") } }
+            DispatchQueue.main.async { self.reloadUI(status: "✅ Fetch Complete", show: true); self.updateAllStatus(); DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.setStatus("Auth Active") } }
         }
     }
     func clearRepo() { if !config.repos.isEmpty && config.selectedRepoIndex < config.repos.count { config.repos.remove(at: config.selectedRepoIndex); config.selectedRepoIndex = max(0, config.selectedRepoIndex - 1); saveConfig(); reloadUI() } }
@@ -1001,6 +1011,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.dialogPopover.performClose(nil)
             self.stashAndSwitch(targetBranch: targetBranch)
         }, onCancel: { self.dialogPopover.performClose(nil) })
+        self.popover.performClose(nil)
         dialogPopover.contentViewController = NSHostingController(rootView: stashView)
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
@@ -1012,7 +1023,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "stash"])
             DispatchQueue.main.async {
                 if success {
-                    self.reloadUI(status: "✅ Stashed Changes")
+                    self.reloadUI(status: "✅ Stashed Changes", show: true)
                 } else {
                     self.setStatus("❌ Stash Failed", color: .systemRed)
                     print(output)
@@ -1028,7 +1039,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "stash", "pop"])
             DispatchQueue.main.async {
                 if success {
-                    self.reloadUI(status: "✅ Restored Stash")
+                    self.reloadUI(status: "✅ Restored Stash", show: true)
                 } else {
                     self.setStatus("❌ Pop Failed (Conflicts?)", color: .systemRed)
                     print(output)
@@ -1043,6 +1054,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.executeStashPop()
         }, onDismiss: { self.dialogPopover.performClose(nil) })
         
+        self.popover.performClose(nil)
         dialogPopover.contentViewController = NSHostingController(rootView: popView)
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
@@ -1055,7 +1067,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let checkoutResult = self.runShell(args: ["-C", currentRepo.path, "checkout", targetBranch])
             DispatchQueue.main.async {
                 if checkoutResult.success {
-                    self.reloadUI(status: "✅ Switched to \(targetBranch)")
+                    self.reloadUI(status: "✅ Switched to \(targetBranch)", show: true)
                 } else {
                     self.setStatus("❌ Switch Failed", color: .systemRed)
                 }
@@ -1068,6 +1080,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.commitChanges(message: message)
             self.dialogPopover.performClose(nil)
         }, onCancel: { self.dialogPopover.performClose(nil) })
+        self.popover.performClose(nil)
         dialogPopover.contentViewController = NSHostingController(rootView: commitView)
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
@@ -1080,7 +1093,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "commit", "-m", message])
             DispatchQueue.main.async {
                 if success {
-                    self.reloadUI(status: "✅ Committed")
+                    self.reloadUI(status: "✅ Committed", show: true)
                     self.updateAllStatus()
                 } else {
                     self.setStatus("❌ Commit Failed", color: .systemRed)
@@ -1097,7 +1110,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "push", "-u", "origin", "HEAD"])
             DispatchQueue.main.async {
                 if success {
-                    self.reloadUI(status: "✅ Push Complete")
+                    self.reloadUI(status: "✅ Push Complete", show: true)
                 } else {
                     self.setStatus("❌ Push Failed", color: .systemRed)
                     print(output)
@@ -1122,6 +1135,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.dialogPopover.performClose(nil)
         }, onCancel: { self.dialogPopover.performClose(nil) })
         
+        self.popover.performClose(nil)
         dialogPopover.contentViewController = NSHostingController(rootView: rebaseView)
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
@@ -1133,7 +1147,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "rebase", target])
             DispatchQueue.main.async {
                 if success {
-                    self.reloadUI(status: "✅ Rebase Complete")
+                    self.reloadUI(status: "✅ Rebase Complete", show: true)
                     self.updateAllStatus()
                 } else {
                     self.setStatus("❌ Rebase Failed", color: .systemRed)
@@ -1161,6 +1175,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.dialogPopover.performClose(nil)
         }, onCancel: { self.dialogPopover.performClose(nil) })
         
+        self.popover.performClose(nil)
         dialogPopover.contentViewController = NSHostingController(rootView: mergeView)
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
@@ -1172,7 +1187,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "merge", target])
             DispatchQueue.main.async {
                 if success {
-                    self.reloadUI(status: "✅ Merge Complete")
+                    self.reloadUI(status: "✅ Merge Complete", show: true)
                     self.updateAllStatus()
                 } else {
                     self.setStatus("❌ Merge Failed", color: .systemRed)
@@ -1190,7 +1205,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func loadConfig() { if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let decoded = try? JSONDecoder().decode(Config.self, from: data) { self.config = decoded } }
     func saveConfig() { if let data = try? JSONEncoder().encode(config) { try? data.write(to: URL(fileURLWithPath: configFilePath)) } }
-    func reloadUI(status: String? = nil) { DispatchQueue.main.async { self.loadConfig(); let vc = GitTrackerController(config: self.config, onAction: self.handleAction); self.popover.contentViewController = vc; if let s = status { self.setStatus(s) } } }
+    func reloadUI(status: String? = nil, show: Bool = false) { 
+        DispatchQueue.main.async { 
+            self.loadConfig(); 
+            let vc = GitTrackerController(config: self.config, onAction: self.handleAction); 
+            self.popover.contentViewController = vc; 
+            if let s = status { self.setStatus(s) } 
+            if show { self.showPopover() }
+        } 
+    }
 }
 
 let app = NSApplication.shared; let delegate = AppDelegate(); app.delegate = delegate; app.run()
