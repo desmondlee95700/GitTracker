@@ -465,7 +465,12 @@ class StackedStatusBar: NSView {
     }
 }
 
-let trackerRoot = "/Users/dessy/Documents/sidehustle/GitTrackerTracker"; let configFilePath = "\(trackerRoot)/config.json"
+let fileManager = FileManager.default
+let homeDirectory = fileManager.homeDirectoryForCurrentUser
+let trackerRoot = homeDirectory.appendingPathComponent("Documents/GitTracker").path
+let legacyTrackerRoot = homeDirectory.appendingPathComponent("Documents/sidehustle/GitTrackerTracker").path
+let configFilePath = "\(trackerRoot)/config.json"
+let legacyConfigFilePath = "\(legacyTrackerRoot)/config.json"
 struct TrackedRepo: Codable, Equatable { var url: String; var path: String; var name: String }
 struct Config: Codable {
     var repos: [TrackedRepo] = []; var selectedRepoIndex = 0; var githubLogin: String?
@@ -951,6 +956,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var activeAuthSessionID: UUID?
     var cachedGitHubToken: String?
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ensureTrackerDirectory()
         migrateConfig()
         loadConfig()
         cachedGitHubToken = KeychainHelper.loadToken()
@@ -992,6 +998,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func refreshGitHubTokenCache() {
         cachedGitHubToken = KeychainHelper.loadToken()
+    }
+
+    func ensureTrackerDirectory() {
+        try? FileManager.default.createDirectory(atPath: trackerRoot, withIntermediateDirectories: true, attributes: nil)
     }
     
     var hasGitHubAuth: Bool { !(config.githubLogin?.isEmpty ?? true) && !(cachedGitHubToken?.isEmpty ?? true) }
@@ -1044,6 +1054,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func normalizedRepoPath(_ path: String) -> String {
         URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    func localGitRoot(for path: String) -> String? {
+        let normalizedPath = normalizedRepoPath(path)
+        let result = runShell(args: ["-C", normalizedPath, "rev-parse", "--show-toplevel"])
+        guard result.success else { return nil }
+        let root = normalizedRepoPath(result.output)
+        return FileManager.default.fileExists(atPath: root) ? root : nil
     }
     
     func normalizedRemoteURL(_ url: String) -> String {
@@ -1196,9 +1214,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
     func trackRepo(input: String) {
-        guard !input.isEmpty else { return }; let cleanInput = input.replacingOccurrences(of: "file://", with: ""), expanded = normalizedRepoPath((cleanInput as NSString).expandingTildeInPath); let repoName = cleanInput.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
+        guard !input.isEmpty else { return }; let cleanInput = input.replacingOccurrences(of: "file://", with: ""), expanded = normalizedRepoPath((cleanInput as NSString).expandingTildeInPath)
         if FileManager.default.fileExists(atPath: expanded) {
-            let repo = TrackedRepo(url: cleanInput, path: expanded, name: repoName)
+            guard let repoRoot = localGitRoot(for: expanded) else {
+                reloadUI(status: "❌ Selected folder is not a Git repository", show: true)
+                return
+            }
+            let repoName = URL(fileURLWithPath: repoRoot).lastPathComponent
+            let repo = TrackedRepo(url: repoOriginURL(path: repoRoot) ?? cleanInput, path: repoRoot, name: repoName)
             if let existingIndex = existingRepoIndex(for: repo) {
                 config.selectedRepoIndex = existingIndex
                 saveConfig()
@@ -1208,6 +1231,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         else {
+            let repoName = cleanInput.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
             let normalizedInputURL = normalizedRemoteURL(cleanInput)
             if let existingIndex = config.repos.enumerated().first(where: { _, existing in normalizedRemoteURL(existing.url) == normalizedInputURL || repoOriginURL(path: existing.path) == normalizedInputURL })?.offset {
                 config.selectedRepoIndex = existingIndex
@@ -1584,6 +1608,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         reloadUI(status: "Signed Out", show: true)
     }
     func migrateConfig() {
+        ensureTrackerDirectory()
+        let sourcePath = FileManager.default.fileExists(atPath: configFilePath) ? configFilePath : (FileManager.default.fileExists(atPath: legacyConfigFilePath) ? legacyConfigFilePath : configFilePath)
+        if sourcePath != configFilePath, let data = try? Data(contentsOf: URL(fileURLWithPath: sourcePath)) {
+            try? data.write(to: URL(fileURLWithPath: configFilePath), options: .atomic)
+        }
         if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             var shouldSave = false
             if json["repos"] == nil {
@@ -1623,6 +1652,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     func saveConfig() {
+        ensureTrackerDirectory()
         config.token = nil
         config.username = nil
         if let data = try? JSONEncoder().encode(config) { try? data.write(to: URL(fileURLWithPath: configFilePath)) }
