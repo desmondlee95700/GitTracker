@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import Security
 import SwiftUI
@@ -657,6 +658,97 @@ struct AddRepoView: View {
     }
 }
 
+final class CloneDraft: ObservableObject {
+    let url: String
+    let repoName: String
+    @Published var localPath: String
+    
+    init(url: String, repoName: String, localPath: String) {
+        self.url = url
+        self.repoName = repoName
+        self.localPath = localPath
+    }
+    
+    var finalPath: String {
+        URL(fileURLWithPath: localPath).appendingPathComponent(repoName).standardized.path
+    }
+}
+
+struct CloneRemoteView: View {
+    @ObservedObject var draft: CloneDraft
+    var onChoosePath: () -> Void
+    var onClone: () -> Void
+    var onCancel: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Clone Repository").font(.headline)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text("REPOSITORY URL").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                Text(draft.url)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.08))
+                    .cornerRadius(6)
+            }
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text("LOCAL PATH").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    TextField("", text: $draft.localPath)
+                        .textFieldStyle(.plain)
+                        .padding(8)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(6)
+                    Button("Choose...", action: onChoosePath)
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(6)
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text("FINAL DESTINATION").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                Text(draft.finalPath)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.08))
+                    .cornerRadius(6)
+            }
+            
+            HStack(spacing: 12) {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.1))
+                    .cornerRadius(6)
+                Button("Clone", action: onClone)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(6)
+                    .disabled(draft.localPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .background(VisualEffectView())
+    }
+}
+
 struct CommitView: View {
     @State private var message: String = ""
     var onCommit: (String) -> Void
@@ -824,7 +916,7 @@ class GitTrackerController: NSViewController {
         
         let headerStack = NSStackView(); headerStack.orientation = .horizontal; headerStack.alignment = .centerY; headerStack.spacing = 12
         let titleLabel = NSTextField(labelWithString: "GitTracker"); titleLabel.font = .systemFont(ofSize: 26, weight: .heavy); titleLabel.textColor = .systemBlue; headerStack.addArrangedSubview(titleLabel)
-        let vLabelTop = NSTextField(labelWithString: "V3.1"); vLabelTop.font = .systemFont(ofSize: 12, weight: .bold); vLabelTop.textColor = .white; vLabelTop.isBordered = false; vLabelTop.drawsBackground = false; headerStack.addArrangedSubview(vLabelTop)
+        let vLabelTop = NSTextField(labelWithString: "V3.2"); vLabelTop.font = .systemFont(ofSize: 12, weight: .bold); vLabelTop.textColor = .white; vLabelTop.isBordered = false; vLabelTop.drawsBackground = false; headerStack.addArrangedSubview(vLabelTop)
         
         headerStack.addArrangedSubview(NSView()); headerStack.arrangedSubviews.last?.setContentHuggingPriority(.defaultLow, for: .horizontal)
         
@@ -1088,6 +1180,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return cleaned.isEmpty ? "repo" : cleaned
     }
     
+    func defaultCloneParentPath() -> String {
+        let sidehustlePath = homeDirectory.appendingPathComponent("Documents/sidehustle").path
+        if FileManager.default.fileExists(atPath: sidehustlePath) {
+            return normalizedRepoPath(sidehustlePath)
+        }
+        return normalizedRepoPath(homeDirectory.appendingPathComponent("Documents").path)
+    }
+    
     func normalizedRepoPath(_ path: String) -> String {
         URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
     }
@@ -1163,11 +1263,78 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.directoryURL = URL(fileURLWithPath: trackerRoot)
+        panel.directoryURL = URL(fileURLWithPath: defaultCloneParentPath())
         panel.prompt = "Clone Here"
-        panel.message = "Choose the folder where GitTracker should clone \(repoName)."
+        panel.message = "Choose the parent folder where GitTracker should create \(repoName)."
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         return normalizedRepoPath(url.path)
+    }
+    
+    func promptForClonePath(currentPath: String, repoName: String) -> String? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: normalizedRepoPath(currentPath))
+        panel.prompt = "Use Folder"
+        panel.message = "Choose the parent folder where GitTracker should create \(repoName)."
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return normalizedRepoPath(url.path)
+    }
+    
+    func promptForRemoteClone(url: String) {
+        let cleanURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        let repoName = repoName(from: cleanURL)
+        let draft = CloneDraft(url: cleanURL, repoName: repoName, localPath: defaultCloneParentPath())
+        let cloneView = CloneRemoteView(draft: draft, onChoosePath: {
+            if let selectedPath = self.promptForClonePath(currentPath: draft.localPath, repoName: repoName) {
+                draft.localPath = selectedPath
+            }
+        }, onClone: {
+            self.dialogPopover.performClose(nil)
+            self.performRemoteClone(url: cleanURL, destinationParent: draft.localPath, repoName: repoName)
+        }, onCancel: {
+            self.dialogPopover.performClose(nil)
+        })
+        self.popover.performClose(nil)
+        dialogPopover.contentViewController = NSHostingController(rootView: cloneView)
+        if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
+    }
+    
+    func performRemoteClone(url: String, destinationParent: String, repoName: String) {
+        let cleanInput = url.replacingOccurrences(of: "file://", with: "")
+        let parentPath = normalizedRepoPath((destinationParent as NSString).expandingTildeInPath)
+        let path = normalizedRepoPath((parentPath as NSString).appendingPathComponent(repoName))
+        if FileManager.default.fileExists(atPath: path) {
+            if isGitRepository(path: path) {
+                let repo = TrackedRepo(url: cleanInput, path: path, name: repoName)
+                if let existingIndex = existingRepoIndex(for: repo) {
+                    updateTrackedRepo(repo, at: existingIndex)
+                } else {
+                    addAndSelectRepo(repo)
+                }
+            } else {
+                reloadUI(status: "❌ Destination Already Exists", show: true)
+            }
+            return
+        }
+        setStatus("⌛ Cloning...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = self.runShell(args: ["clone", cleanInput, path], includeGitHubAuth: self.isGitHubURL(cleanInput))
+            DispatchQueue.main.async {
+                if result.success {
+                    let repo = TrackedRepo(url: cleanInput, path: path, name: repoName)
+                    if let existingIndex = self.existingRepoIndex(for: repo) {
+                        self.config.selectedRepoIndex = existingIndex
+                        self.saveConfig()
+                        self.reloadUI(status: "Already Tracking", show: true)
+                    } else {
+                        self.addAndSelectRepo(repo)
+                    }
+                }
+                else { self.reloadUI(status: "❌ \(result.output.components(separatedBy: "\n").first { !$0.isEmpty } ?? "Clone Failed")", show: true) }
+            }
+        }
     }
     
     func handleAction(_ type: String) {
@@ -1299,7 +1466,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func promptForRepo() {
         let addView = AddRepoView(onAdd: { input in
-            self.trackRepo(input: input.trimmingCharacters(in: .whitespaces)); self.dialogPopover.performClose(nil)
+            self.trackRepo(input: input.trimmingCharacters(in: .whitespaces))
         }, onBrowse: {
             self.dialogPopover.performClose(nil)
             let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
@@ -1331,7 +1498,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         else {
-            let repoName = cleanInput.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
             let normalizedInputURL = normalizedRemoteURL(cleanInput)
             if let existingIndex = config.repos.enumerated().first(where: { _, existing in normalizedRemoteURL(existing.url) == normalizedInputURL || repoOriginURL(path: existing.path) == normalizedInputURL })?.offset {
                 config.selectedRepoIndex = existingIndex
@@ -1339,41 +1505,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 reloadUI(status: "Already Tracking", show: true)
                 return
             }
-            guard let destinationParent = promptForCloneDestination(repoName: repoName) else {
-                reloadUI(status: "Clone Cancelled", show: true)
-                return
-            }
-            let path = normalizedRepoPath((destinationParent as NSString).appendingPathComponent(repoName))
-            if FileManager.default.fileExists(atPath: path) {
-                if isGitRepository(path: path) {
-                    let repo = TrackedRepo(url: cleanInput, path: path, name: repoName)
-                    if let existingIndex = existingRepoIndex(for: repo) {
-                        updateTrackedRepo(repo, at: existingIndex)
-                    } else {
-                        addAndSelectRepo(repo)
-                    }
-                } else {
-                    reloadUI(status: "❌ Destination Already Exists", show: true)
-                }
-                return
-            }
-            setStatus("⌛ Cloning...")
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = self.runShell(args: ["clone", cleanInput, path], includeGitHubAuth: self.isGitHubURL(cleanInput))
-                DispatchQueue.main.async {
-                    if result.success {
-                        let repo = TrackedRepo(url: cleanInput, path: path, name: repoName)
-                        if let existingIndex = self.existingRepoIndex(for: repo) {
-                            self.config.selectedRepoIndex = existingIndex
-                            self.saveConfig()
-                            self.reloadUI(status: "Already Tracking", show: true)
-                        } else {
-                            self.addAndSelectRepo(repo)
-                        }
-                    }
-                    else { self.reloadUI(status: "❌ \(result.output.components(separatedBy: "\n").first { !$0.isEmpty } ?? "Clone Failed")", show: true) }
-                }
-            }
+            promptForRemoteClone(url: cleanInput)
         }
     }
     func addAndSelectRepo(_ repo: TrackedRepo) {
