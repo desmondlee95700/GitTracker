@@ -79,7 +79,7 @@ struct ProjectSelectionView: View {
     
     var statusPill: some View {
         HStack(spacing: 4) {
-            Image(systemName: status.contains("Dirty") ? "pencil.circle.fill" : "checkmark.circle.fill").font(.system(size: 12))
+            Image(systemName: status.contains("Modified") ? "pencil.circle.fill" : "checkmark.circle.fill").font(.system(size: 12))
             Text(status).font(.system(size: 11, weight: .black))
         }.padding(.horizontal, 10).padding(.vertical, 5).background(statusColor.opacity(0.15)).cornerRadius(20).foregroundColor(statusColor)
     }
@@ -451,13 +451,13 @@ struct CommitRowView: View {
 }
 
 class StackedStatusBar: NSView {
-    var cleanCount = 0, dirtyCount = 0, aheadCount = 0, behindCount = 0
-    func update(clean: Int, dirty: Int, ahead: Int, behind: Int) { self.cleanCount = clean; self.dirtyCount = dirty; self.aheadCount = ahead; self.behindCount = behind; self.needsDisplay = true }
+    var upToDateCount = 0, modifiedCount = 0, aheadCount = 0, behindCount = 0
+    func update(upToDate: Int, modified: Int, ahead: Int, behind: Int) { self.upToDateCount = upToDate; self.modifiedCount = modified; self.aheadCount = ahead; self.behindCount = behind; self.needsDisplay = true }
     override func draw(_ dirtyRect: NSRect) {
-        let total = CGFloat(cleanCount + dirtyCount + aheadCount + behindCount)
+        let total = CGFloat(upToDateCount + modifiedCount + aheadCount + behindCount)
         if total == 0 { NSColor.white.withAlphaComponent(0.1).set(); NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill(); return }
         let path = NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4); path.addClip()
-        var currentX: CGFloat = 0; let segments: [(Int, NSColor)] = [(behindCount, .systemRed), (aheadCount, .systemBlue), (dirtyCount, .systemOrange), (cleanCount, .systemGreen)]
+        var currentX: CGFloat = 0; let segments: [(Int, NSColor)] = [(behindCount, .systemRed), (aheadCount, .systemBlue), (modifiedCount, .systemOrange), (upToDateCount, .systemGreen)]
         for (count, color) in segments { if count > 0 { let width = (CGFloat(count) / total) * bounds.width; color.set(); NSRect(x: currentX, y: 0, width: width, height: bounds.height).fill(); currentX += width } }
     }
 }
@@ -746,10 +746,10 @@ class GitTrackerController: NSViewController {
             }
         }
         let repoStatus = getRepoStatus(path: currentRepo.path)
-        var statusStr = "✓ Clean", statusColor: Color = .secondary
+        var statusStr = "✓ Up to Date", statusColor: Color = .secondary
         if !repoStatus.3 {
             var parts = [String]()
-            if repoStatus.0 { parts.append("Dirty") }
+            if repoStatus.0 { parts.append("Modified") }
             if repoStatus.1 > 0 { parts.append("↑\(repoStatus.1)") }
             if repoStatus.2 > 0 { parts.append("↓\(repoStatus.2)") }
             statusStr = parts.joined(separator: " "); statusColor = .orange
@@ -944,15 +944,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func updateAllStatus() {
         DispatchQueue.global(qos: .background).async {
-            var clean = 0, dirty = 0, ahead = 0, behind = 0, attention = 0
+            var upToDate = 0, modified = 0, ahead = 0, behind = 0, attention = 0
             for repo in self.config.repos {
                 if !FileManager.default.fileExists(atPath: repo.path) { continue }
                 let s = (self.popover.contentViewController as? GitTrackerController)?.getRepoStatus(path: repo.path) ?? (false, 0, 0, true)
-                if s.3 { clean += 1 } else { if s.2 > 0 { behind += 1; attention += 1 } else if s.1 > 0 { ahead += 1; attention += 1 } else if s.0 { dirty += 1; attention += 1 } }
+                if s.3 { upToDate += 1 } else { if s.2 > 0 { behind += 1; attention += 1 } else if s.1 > 0 { ahead += 1; attention += 1 } else if s.0 { modified += 1; attention += 1 } }
             }
             DispatchQueue.main.async {
                 if let vc = self.popover.contentViewController as? GitTrackerController {
-                    vc.summaryBar.update(clean: clean, dirty: dirty, ahead: ahead, behind: behind); vc.summaryLabel.stringValue = "OVERVIEW: \(attention) REPOS NEED ATTENTION"
+                    vc.summaryBar.update(upToDate: upToDate, modified: modified, ahead: ahead, behind: behind); vc.summaryLabel.stringValue = "OVERVIEW: \(attention) REPOS NEED ATTENTION"
                 }
                 if let b = self.statusItem.button {
                     if attention > 0 { if #available(macOS 11.0, *) { b.image = b.image?.withSymbolConfiguration(NSImage.SymbolConfiguration(hierarchicalColor: .systemOrange)) } }
