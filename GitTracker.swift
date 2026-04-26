@@ -236,7 +236,11 @@ struct CommitDetailView: View {
     func loadFiles() {
         let task = Process()
         task.launchPath = "/usr/bin/git"
-        task.arguments = ["-C", repoPath, "show", "--name-only", "--pretty=format:", commit.hash]
+        if commit.hash == "UNCOMMITTED" {
+            task.arguments = ["-C", repoPath, "status", "--porcelain"]
+        } else {
+            task.arguments = ["-C", repoPath, "show", "--name-only", "--pretty=format:", commit.hash]
+        }
         let pipe = Pipe()
         task.standardOutput = pipe
         task.launch()
@@ -244,7 +248,11 @@ struct CommitDetailView: View {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         if let output = String(data: data, encoding: .utf8) {
             DispatchQueue.main.async {
-                self.files = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+                if self.commit.hash == "UNCOMMITTED" {
+                    self.files = output.components(separatedBy: "\n").filter { !$0.isEmpty }.map { String($0.dropFirst(3)) }
+                } else {
+                    self.files = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+                }
                 self.isLoading = false
             }
         }
@@ -370,7 +378,11 @@ struct FileRowView: View {
         isLoadingDiff = true
         let task = Process()
         task.launchPath = "/usr/bin/git"
-        task.arguments = ["-C", repoPath, "show", "--pretty=format:", commitHash, "--", file]
+        if commitHash == "UNCOMMITTED" {
+            task.arguments = ["-C", repoPath, "diff", "HEAD", "--", file]
+        } else {
+            task.arguments = ["-C", repoPath, "show", "--pretty=format:", commitHash, "--", file]
+        }
         let pipe = Pipe()
         task.standardOutput = pipe
         task.launch()
@@ -619,6 +631,48 @@ struct MergeView: View {
     }
 }
 
+struct StashPromptView: View {
+    var onStashAndSwitch: () -> Void
+    var onCancel: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Uncommitted Changes").font(.headline)
+            Text("Switching branches will overwrite your local changes. Do you want to stash them and continue?")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            HStack(spacing: 12) {
+                Button("Cancel", action: onCancel).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.white.opacity(0.1)).cornerRadius(6)
+                Button("Stash & Switch", action: onStashAndSwitch).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.orange).foregroundColor(.white).cornerRadius(6)
+            }
+        }.padding(20).frame(width: 280).background(VisualEffectView())
+    }
+}
+
+struct StashPopPromptView: View {
+    var onPopStash: () -> Void
+    var onDismiss: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Restore Stashed Changes").font(.headline)
+            Text("You have changes that were auto-stashed before your last branch switch. Do you want to apply them to this branch?")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            HStack(spacing: 12) {
+                Button("Dismiss", action: onDismiss).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.white.opacity(0.1)).cornerRadius(6)
+                Button("Pop Stash", action: onPopStash).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.blue).foregroundColor(.white).cornerRadius(6)
+            }
+        }.padding(20).frame(width: 280).background(VisualEffectView())
+    }
+}
+
 class GitTrackerController: NSViewController {
     var config: Config; var onAction: (String) -> Void
     var statusHostingView: NSHostingView<StatusBadgeView>!
@@ -709,6 +763,12 @@ class GitTrackerController: NSViewController {
         guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else { return }
         let lines = runGit(args: ["-C", currentRepo.path, "log", "-n", "100", "--pretty=format:%h|%s|%ar|%an|%D"]).output.components(separatedBy: "\n").filter { !$0.isEmpty }
         var commits = [Commit]()
+        
+        let repoStatus = getRepoStatus(path: currentRepo.path)
+        if repoStatus.0 {
+            commits.append(Commit(hash: "UNCOMMITTED", message: "Uncommitted Changes", time: "just now", author: "Local Working Directory", decoration: "", dotColor: .orange))
+        }
+        
         for line in lines {
             let parts = line.components(separatedBy: "|")
             if parts.count >= 4 {
@@ -748,8 +808,12 @@ class GitTrackerController: NSViewController {
         let menu = NSMenu()
         menu.addItem(withTitle: "Commit...", action: #selector(didCommit), keyEquivalent: "")
         menu.addItem(withTitle: "Push", action: #selector(didPush), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Rebase...", action: #selector(didRebase), keyEquivalent: "")
         menu.addItem(withTitle: "Merge...", action: #selector(didMerge), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "Stash Changes", action: #selector(didStash), keyEquivalent: "")
+        menu.addItem(withTitle: "Stash Pop", action: #selector(didStashPop), keyEquivalent: "")
         for item in menu.items { item.target = self }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
     }
@@ -757,6 +821,8 @@ class GitTrackerController: NSViewController {
     @objc func didPush() { onAction("push") }
     @objc func didRebase() { onAction("promptRebase") }
     @objc func didMerge() { onAction("promptMerge") }
+    @objc func didStash() { onAction("stash") }
+    @objc func didStashPop() { onAction("stashPop") }
     
     @discardableResult
     func runGit(args: [String]) -> (output: String, success: Bool) {
@@ -789,13 +855,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.applicationIconImage = icon
         
-        if let b = statusItem.button { 
+        if let b = statusItem.button {
             if #available(macOS 11.0, *), let img = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil) { img.isTemplate = true; b.image = img } else { b.title = "ᚠ" }
-            b.action = #selector(togglePopover); b.target = self 
+            b.action = #selector(togglePopover); b.target = self
         }
-        popover.contentViewController = GitTrackerController(config: config, onAction: handleAction); popover.behavior = .transient; setupEditMenu()
-        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in self.updateAllStatus() }
-    }
+        popover.contentViewController = GitTrackerController(config: config, onAction: handleAction); popover.behavior = .transient
+        dialogPopover.behavior = .applicationDefined
+        setupEditMenu()
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in self.updateAllStatus() }    }
     func setupEditMenu() { let m = NSMenu(); let e = NSMenu(title: "Edit"); e.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"); let i = NSMenuItem(); i.submenu = e; m.addItem(i); NSApp.mainMenu = m }
     @objc func togglePopover() {
         if popover.isShown { popover.performClose(nil) }
@@ -821,20 +888,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 setStatus("⌛ Checking out...")
                 DispatchQueue.global(qos: .userInitiated).async {
                     var success = false
+                    var output = ""
                     if branch.hasPrefix("origin/") {
                         let localName = branch.replacingOccurrences(of: "origin/", with: "")
                         let exists = self.runShell(args: ["-C", currentRepo.path, "rev-parse", "--verify", localName]).success
                         if !exists {
-                            success = self.runShell(args: ["-C", currentRepo.path, "checkout", "-b", localName, "--track", branch]).success
+                            let result = self.runShell(args: ["-C", currentRepo.path, "checkout", "-b", localName, "--track", branch])
+                            success = result.success; output = result.output
                         } else {
-                            success = self.runShell(args: ["-C", currentRepo.path, "checkout", localName]).success
+                            let result = self.runShell(args: ["-C", currentRepo.path, "checkout", localName])
+                            success = result.success; output = result.output
                         }
                     } else {
-                        success = self.runShell(args: ["-C", currentRepo.path, "checkout", branch]).success
+                        let result = self.runShell(args: ["-C", currentRepo.path, "checkout", branch])
+                        success = result.success; output = result.output
                     }
                     DispatchQueue.main.async {
-                        if success { self.reloadUI(status: "✅ Switched to \(branch)") }
-                        else { self.setStatus("❌ Checkout Failed", color: .systemRed) }
+                        if success {
+                            let stashList = self.runShell(args: ["-C", currentRepo.path, "stash", "list", "-n", "1"]).output
+                            if stashList.contains("Auto-stashed before checkout") {
+                                self.reloadUI(status: "✅ Switched to \(branch)")
+                                self.promptForStashPop()
+                            } else {
+                                self.reloadUI(status: "✅ Switched to \(branch)")
+                            }
+                        } else {
+                            if output.contains("stash them before you switch branches") || output.contains("would be overwritten by checkout") {
+                                self.promptForStash(targetBranch: branch.replacingOccurrences(of: "origin/", with: ""))
+                            } else {
+                                self.setStatus("❌ Checkout Failed", color: .systemRed)
+                            }
+                        }
                     }
                 }
             }; return
@@ -843,6 +927,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switch type {
         case "sync": refreshRepo(); case "track": promptForRepo(); case "auth": promptForAuth(); case "clear": clearRepo(); case "quit": NSApp.terminate(nil)
         case "promptCommit": promptForCommit(); case "push": pushCommits(); case "promptRebase": promptForRebase(); case "promptMerge": promptForMerge()
+        case "stash": executeStash(); case "stashPop": executeStashPop()
         default: break
         }
     }
@@ -911,6 +996,73 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func clearRepo() { if !config.repos.isEmpty && config.selectedRepoIndex < config.repos.count { config.repos.remove(at: config.selectedRepoIndex); config.selectedRepoIndex = max(0, config.selectedRepoIndex - 1); saveConfig(); reloadUI() } }
     
+    func promptForStash(targetBranch: String) {
+        let stashView = StashPromptView(onStashAndSwitch: {
+            self.dialogPopover.performClose(nil)
+            self.stashAndSwitch(targetBranch: targetBranch)
+        }, onCancel: { self.dialogPopover.performClose(nil) })
+        dialogPopover.contentViewController = NSHostingController(rootView: stashView)
+        if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
+    }
+
+    func executeStash() {
+        guard let currentRepo = config.currentRepo else { return }
+        setStatus("⌛ Stashing...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "stash"])
+            DispatchQueue.main.async {
+                if success {
+                    self.reloadUI(status: "✅ Stashed Changes")
+                } else {
+                    self.setStatus("❌ Stash Failed", color: .systemRed)
+                    print(output)
+                }
+            }
+        }
+    }
+
+    func executeStashPop() {
+        guard let currentRepo = config.currentRepo else { return }
+        setStatus("⌛ Popping Stash...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "stash", "pop"])
+            DispatchQueue.main.async {
+                if success {
+                    self.reloadUI(status: "✅ Restored Stash")
+                } else {
+                    self.setStatus("❌ Pop Failed (Conflicts?)", color: .systemRed)
+                    print(output)
+                }
+            }
+        }
+    }
+
+    func promptForStashPop() {
+        let popView = StashPopPromptView(onPopStash: {
+            self.dialogPopover.performClose(nil)
+            self.executeStashPop()
+        }, onDismiss: { self.dialogPopover.performClose(nil) })
+        
+        dialogPopover.contentViewController = NSHostingController(rootView: popView)
+        if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
+    }
+
+    func stashAndSwitch(targetBranch: String) {
+        guard let currentRepo = config.currentRepo else { return }
+        setStatus("⌛ Stashing & Switching...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = self.runShell(args: ["-C", currentRepo.path, "stash", "push", "-m", "Auto-stashed before checkout to \(targetBranch)"])
+            let checkoutResult = self.runShell(args: ["-C", currentRepo.path, "checkout", targetBranch])
+            DispatchQueue.main.async {
+                if checkoutResult.success {
+                    self.reloadUI(status: "✅ Switched to \(targetBranch)")
+                } else {
+                    self.setStatus("❌ Switch Failed", color: .systemRed)
+                }
+            }
+        }
+    }
+
     func promptForCommit() {
         let commitView = CommitView(onCommit: { message in
             self.commitChanges(message: message)
@@ -942,7 +1094,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let currentRepo = config.currentRepo else { return }
         setStatus("⌛ Pushing...")
         DispatchQueue.global(qos: .userInitiated).async {
-            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "push"])
+            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "push", "-u", "origin", "HEAD"])
             DispatchQueue.main.async {
                 if success {
                     self.reloadUI(status: "✅ Push Complete")
