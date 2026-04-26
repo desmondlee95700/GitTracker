@@ -12,6 +12,8 @@ struct Commit: Identifiable, Equatable {
     let id = UUID(); let hash: String; let message: String; let time: String; let author: String; let decoration: String; let dotColor: Color
 }
 
+let gitFieldSeparator = "\u{1f}"
+
 struct ProjectSelectionView: View {
     let repos: [TrackedRepo]; let selectedRepoIndex: Int; let selectedBranch: String; let branches: [String]; let status: String; let statusColor: Color
     let onRepoChange: (Int) -> Void; let onBranchChange: (String) -> Void; let onAdd: () -> Void; let onRemove: () -> Void
@@ -237,26 +239,35 @@ struct CommitDetailView: View {
     }
     
     func loadFiles() {
-        let task = Process()
-        task.launchPath = "/usr/bin/git"
-        if commit.hash == "UNCOMMITTED" {
-            task.arguments = ["-C", repoPath, "status", "--porcelain"]
-        } else {
-            task.arguments = ["-C", repoPath, "show", "--name-only", "--pretty=format:", commit.hash]
-        }
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.launch()
-        
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8) {
-            DispatchQueue.main.async {
-                if self.commit.hash == "UNCOMMITTED" {
-                    self.files = output.components(separatedBy: "\n").filter { !$0.isEmpty }.map { String($0.dropFirst(3)) }
-                } else {
-                    self.files = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let task = Process()
+            task.launchPath = "/usr/bin/git"
+            task.standardOutput = Pipe()
+            task.standardError = task.standardOutput
+            if self.commit.hash == "UNCOMMITTED" {
+                task.arguments = ["-C", self.repoPath, "status", "--porcelain"]
+            } else {
+                task.arguments = ["-C", self.repoPath, "show", "--name-only", "--pretty=format:", self.commit.hash]
+            }
+
+            do {
+                try task.run()
+                task.waitUntilExit()
+                let data = (task.standardOutput as? Pipe)?.fileHandleForReading.readDataToEndOfFile() ?? Data()
+                let output = String(data: data, encoding: .utf8) ?? ""
+                DispatchQueue.main.async {
+                    if self.commit.hash == "UNCOMMITTED" {
+                        self.files = output.components(separatedBy: "\n").filter { !$0.isEmpty }.map { String($0.dropFirst(3)) }
+                    } else {
+                        self.files = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+                    }
+                    self.isLoading = false
                 }
-                self.isLoading = false
+            } catch {
+                DispatchQueue.main.async {
+                    self.files = []
+                    self.isLoading = false
+                }
             }
         }
     }
@@ -379,27 +390,31 @@ struct FileRowView: View {
     
     func loadDiff() {
         isLoadingDiff = true
-        let task = Process()
-        task.launchPath = "/usr/bin/git"
-        if commitHash == "UNCOMMITTED" {
-            task.arguments = ["-C", repoPath, "diff", "HEAD", "--", file]
-        } else {
-            task.arguments = ["-C", repoPath, "show", "--pretty=format:", commitHash, "--", file]
-        }
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.launch()
-        
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8) {
-            DispatchQueue.main.async {
-                self.diffText = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                self.isLoadingDiff = false
+        DispatchQueue.global(qos: .userInitiated).async {
+            let task = Process()
+            task.launchPath = "/usr/bin/git"
+            task.standardOutput = Pipe()
+            task.standardError = task.standardOutput
+            if self.commitHash == "UNCOMMITTED" {
+                task.arguments = ["-C", self.repoPath, "diff", "HEAD", "--", self.file]
+            } else {
+                task.arguments = ["-C", self.repoPath, "show", "--pretty=format:", self.commitHash, "--", self.file]
             }
-        } else {
-            DispatchQueue.main.async {
-                self.diffText = "Error loading diff"
-                self.isLoadingDiff = false
+
+            do {
+                try task.run()
+                task.waitUntilExit()
+                let data = (task.standardOutput as? Pipe)?.fileHandleForReading.readDataToEndOfFile() ?? Data()
+                let output = String(data: data, encoding: .utf8)
+                DispatchQueue.main.async {
+                    self.diffText = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Error loading diff"
+                    self.isLoadingDiff = false
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.diffText = "Error loading diff"
+                    self.isLoadingDiff = false
+                }
             }
         }
     }
@@ -875,7 +890,8 @@ class GitTrackerController: NSViewController {
     
     func updateCommits() {
         guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else { return }
-        let lines = runGit(args: ["-C", currentRepo.path, "log", "-n", "100", "--pretty=format:%h|%s|%ar|%an|%D"]).output.components(separatedBy: "\n").filter { !$0.isEmpty }
+        let format = "%h\(gitFieldSeparator)%s\(gitFieldSeparator)%ar\(gitFieldSeparator)%an\(gitFieldSeparator)%D"
+        let lines = runGit(args: ["-C", currentRepo.path, "log", "-n", "100", "--pretty=format:\(format)"]).output.components(separatedBy: "\n").filter { !$0.isEmpty }
         var commits = [Commit]()
         
         let repoStatus = getRepoStatus(path: currentRepo.path)
@@ -884,7 +900,7 @@ class GitTrackerController: NSViewController {
         }
         
         for line in lines {
-            let parts = line.components(separatedBy: "|")
+            let parts = line.components(separatedBy: gitFieldSeparator)
             if parts.count >= 4 {
                 let deco = parts.count > 4 ? parts[4] : ""
                 commits.append(Commit(hash: parts[0], message: parts[1], time: parts[2], author: parts[3], decoration: deco, dotColor: Color(getBranchColor(deco: deco))))
@@ -1147,25 +1163,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if type.hasPrefix("repoChanged:") { if let index = Int(type.replacingOccurrences(of: "repoChanged:", with: "")) { config.selectedRepoIndex = index; saveConfig(); reloadUI() }; return }
         if type.hasPrefix("branchChanged:") {
             let branch = type.replacingOccurrences(of: "branchChanged:", with: "")
-            if branch != "All Branches", let currentRepo = config.currentRepo {
+            if branch != "All Branches", let currentRepo = requireExistingCurrentRepo() {
                 setStatus("⌛ Checking out...")
                 DispatchQueue.global(qos: .userInitiated).async {
-                    var success = false
-                    var output = ""
-                    if branch.hasPrefix("origin/") {
-                        let localName = branch.replacingOccurrences(of: "origin/", with: "")
-                        let exists = self.runShell(args: ["-C", currentRepo.path, "rev-parse", "--verify", localName]).success
-                        if !exists {
-                            let result = self.runShell(args: ["-C", currentRepo.path, "checkout", "-b", localName, "--track", branch])
-                            success = result.success; output = result.output
-                        } else {
-                            let result = self.runShell(args: ["-C", currentRepo.path, "checkout", localName])
-                            success = result.success; output = result.output
-                        }
-                    } else {
-                        let result = self.runShell(args: ["-C", currentRepo.path, "checkout", branch])
-                        success = result.success; output = result.output
-                    }
+                    let result = self.checkoutBranch(repoPath: currentRepo.path, branch: branch)
+                    let success = result.success
+                    let output = result.output
                     DispatchQueue.main.async {
                         if success {
                             let stashList = self.runShell(args: ["-C", currentRepo.path, "stash", "list", "-n", "1"]).output
@@ -1193,6 +1196,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case "stash": executeStash(); case "stashPop": executeStashPop()
         default: break
         }
+    }
+    func repoExists(_ repo: TrackedRepo) -> Bool {
+        FileManager.default.fileExists(atPath: repo.path)
+    }
+
+    func requireExistingCurrentRepo(status: String = "❌ Repository folder is missing") -> TrackedRepo? {
+        guard let currentRepo = config.currentRepo else { return nil }
+        guard repoExists(currentRepo) else {
+            reloadUI(status: status, show: true)
+            return nil
+        }
+        return currentRepo
+    }
+
+    @discardableResult
+    func checkoutBranch(repoPath: String, branch: String) -> (output: String, success: Bool) {
+        if branch.hasPrefix("origin/") {
+            let localName = branch.replacingOccurrences(of: "origin/", with: "")
+            let exists = runShell(args: ["-C", repoPath, "rev-parse", "--verify", localName]).success
+            if exists {
+                return runShell(args: ["-C", repoPath, "checkout", localName])
+            }
+            return runShell(args: ["-C", repoPath, "checkout", "-b", localName, "--track", branch])
+        }
+        return runShell(args: ["-C", repoPath, "checkout", branch])
+    }
+
+    func currentBranchAndUpstream(repoPath: String) -> (branch: String, upstream: String?) {
+        let branch = runShell(args: ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"]).output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let upstreamResult = runShell(args: ["-C", repoPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        let upstream = upstreamResult.success ? upstreamResult.output.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        return (branch, upstream?.isEmpty == false ? upstream : nil)
+    }
+
+    func splitRemoteBranch(_ upstream: String) -> (remote: String, branch: String)? {
+        let parts = upstream.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
+        return (parts[0], parts[1])
     }
     func setStatus(_ text: String, color: NSColor = .secondaryLabelColor) {
         DispatchQueue.main.async { 
@@ -1331,12 +1372,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func refreshRepo() {
-        guard let currentRepo = config.currentRepo else { return }
+        guard let currentRepo = requireExistingCurrentRepo() else { return }
         DispatchQueue.main.async { if let vc = self.popover.contentViewController as? GitTrackerController { vc.syncBtn.isEnabled = false; vc.syncBtn.title = "Fetching..."; self.setStatus("⌛ Fetching...") } }
         DispatchQueue.global(qos: .userInitiated).async {
             let useAuth = self.remoteUsesGitHub(repoPath: currentRepo.path)
-            let fetchResult = self.runShell(args: ["-C", currentRepo.path, "fetch", "origin"], includeGitHubAuth: useAuth)
-            let pullResult = self.runShell(args: ["-C", currentRepo.path, "pull", "origin"], includeGitHubAuth: useAuth)
+            let branchInfo = self.currentBranchAndUpstream(repoPath: currentRepo.path)
+            let remoteName = branchInfo.upstream.flatMap { self.splitRemoteBranch($0)?.remote } ?? "origin"
+            let fetchResult = self.runShell(args: ["-C", currentRepo.path, "fetch", remoteName], includeGitHubAuth: useAuth)
+            let pullResult: (output: String, success: Bool)
+            if let upstream = branchInfo.upstream, let split = self.splitRemoteBranch(upstream) {
+                pullResult = self.runShell(args: ["-C", currentRepo.path, "pull", "--ff-only", split.remote, split.branch], includeGitHubAuth: useAuth)
+            } else {
+                pullResult = ("No upstream configured for \(branchInfo.branch)", false)
+            }
             DispatchQueue.main.async { 
                 if fetchResult.success && pullResult.success {
                     self.reloadUI(status: "✅ Fetch Complete", show: true)
@@ -1362,7 +1410,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func executeStash() {
-        guard let currentRepo = config.currentRepo else { return }
+        guard let currentRepo = requireExistingCurrentRepo() else { return }
         setStatus("⌛ Stashing...")
         DispatchQueue.global(qos: .userInitiated).async {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "stash"])
@@ -1378,7 +1426,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func executeStashPop() {
-        guard let currentRepo = config.currentRepo else { return }
+        guard let currentRepo = requireExistingCurrentRepo() else { return }
         setStatus("⌛ Popping Stash...")
         DispatchQueue.global(qos: .userInitiated).async {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "stash", "pop"])
@@ -1405,11 +1453,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func stashAndSwitch(targetBranch: String) {
-        guard let currentRepo = config.currentRepo else { return }
+        guard let currentRepo = requireExistingCurrentRepo() else { return }
         setStatus("⌛ Stashing & Switching...")
         DispatchQueue.global(qos: .userInitiated).async {
             _ = self.runShell(args: ["-C", currentRepo.path, "stash", "push", "-m", "Auto-stashed before checkout to \(targetBranch)"])
-            let checkoutResult = self.runShell(args: ["-C", currentRepo.path, "checkout", targetBranch])
+            let checkoutResult = self.checkoutBranch(repoPath: currentRepo.path, branch: targetBranch)
             DispatchQueue.main.async {
                 if checkoutResult.success {
                     self.reloadUI(status: "✅ Switched to \(targetBranch)", show: true)
@@ -1431,7 +1479,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func commitChanges(message: String) {
-        guard let currentRepo = config.currentRepo else { return }
+        guard let currentRepo = requireExistingCurrentRepo() else { return }
         setStatus("⌛ Committing...")
         DispatchQueue.global(qos: .userInitiated).async {
             _ = self.runShell(args: ["-C", currentRepo.path, "add", "."])
@@ -1449,7 +1497,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func pushCommits() {
-        guard let currentRepo = config.currentRepo else { return }
+        guard let currentRepo = requireExistingCurrentRepo() else { return }
         setStatus("⌛ Pushing...")
         DispatchQueue.global(qos: .userInitiated).async {
             let useAuth = self.remoteUsesGitHub(repoPath: currentRepo.path)
@@ -1488,7 +1536,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func rebaseBranch(target: String) {
-        guard let currentRepo = config.currentRepo else { return }
+        guard let currentRepo = requireExistingCurrentRepo() else { return }
         setStatus("⌛ Rebasing...")
         DispatchQueue.global(qos: .userInitiated).async {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "rebase", target])
@@ -1528,7 +1576,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func mergeBranch(target: String) {
-        guard let currentRepo = config.currentRepo else { return }
+        guard let currentRepo = requireExistingCurrentRepo() else { return }
         setStatus("⌛ Merging...")
         DispatchQueue.global(qos: .userInitiated).async {
             let (output, success) = self.runShell(args: ["-C", currentRepo.path, "merge", target])
