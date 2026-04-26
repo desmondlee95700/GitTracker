@@ -842,7 +842,8 @@ class GitTrackerController: NSViewController {
     
     func updateUIState() {
         guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else {
-            selectionHostingView.rootView = ProjectSelectionView(repos: config.repos, selectedRepoIndex: 0, selectedBranch: "N/A", branches: [], status: "Ready", statusColor: .secondary, onRepoChange: { i in self.onAction("repoChanged:\(i)") }, onBranchChange: { _ in }, onAdd: { self.onAction("track") }, onRemove: { self.onAction("clear") })
+            let hasMissingRepo = config.currentRepo != nil
+            selectionHostingView.rootView = ProjectSelectionView(repos: config.repos, selectedRepoIndex: config.selectedRepoIndex, selectedBranch: "N/A", branches: [], status: hasMissingRepo ? "Missing Folder" : "Ready", statusColor: hasMissingRepo ? .orange : .secondary, onRepoChange: { i in self.onAction("repoChanged:\(i)") }, onBranchChange: { _ in }, onAdd: { self.onAction("track") }, onRemove: { self.onAction("clear") })
             return
         }
         let branchOut = runGit(args: ["-C", currentRepo.path, "branch", "-a", "--format=%(refname:short)"]).output
@@ -1041,6 +1042,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let remote = runShell(args: ["-C", repoPath, "remote", "get-url", "origin"]).output
         return isGitHubURL(remote)
     }
+
+    func repoName(from input: String) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let lastComponent = path.components(separatedBy: "/").last ?? trimmed
+        let cleaned = lastComponent.replacingOccurrences(of: ".git", with: "")
+        return cleaned.isEmpty ? "repo" : cleaned
+    }
     
     func normalizedRepoPath(_ path: String) -> String {
         URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
@@ -1073,20 +1082,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let normalized = normalizedRemoteURL(result.output)
         return normalized.isEmpty ? nil : normalized
     }
+
+    func isGitRepository(path: String) -> Bool {
+        FileManager.default.fileExists(atPath: path) && runShell(args: ["-C", path, "rev-parse", "--is-inside-work-tree"]).success
+    }
     
     func existingRepoIndex(for repo: TrackedRepo) -> Int? {
         let candidatePath = normalizedRepoPath(repo.path)
         let candidateURL = normalizedRemoteURL(repo.url)
+        let candidateOrigin = repoOriginURL(path: repo.path)
         for (index, existing) in config.repos.enumerated() {
             if normalizedRepoPath(existing.path) == candidatePath { return index }
             let existingURL = normalizedRemoteURL(existing.url)
             if !candidateURL.isEmpty && candidateURL == existingURL { return index }
+            if let candidateOrigin, !existingURL.isEmpty, candidateOrigin == existingURL { return index }
             if let existingOrigin = repoOriginURL(path: existing.path) {
                 if !candidateURL.isEmpty && candidateURL == existingOrigin { return index }
-                if let candidateOrigin = repoOriginURL(path: repo.path), candidateOrigin == existingOrigin { return index }
+                if let candidateOrigin, candidateOrigin == existingOrigin { return index }
             }
         }
         return nil
+    }
+
+    func updateTrackedRepo(_ repo: TrackedRepo, at index: Int) {
+        config.repos[index].path = normalizedRepoPath(repo.path)
+        if !repo.url.isEmpty { config.repos[index].url = repo.url }
+        config.repos[index].name = repo.name
+        config.selectedRepoIndex = index
+        saveConfig()
+        reloadUI(status: "Updated Repository Path", show: true)
+    }
+
+    func promptForCloneDestination(repoName: String) -> String? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: trackerRoot)
+        panel.prompt = "Clone Here"
+        panel.message = "Choose the folder where GitTracker should clone \(repoName)."
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return normalizedRepoPath(url.path)
     }
     
     func handleAction(_ type: String) {
@@ -1196,13 +1232,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
     func trackRepo(input: String) {
-        guard !input.isEmpty else { return }; let cleanInput = input.replacingOccurrences(of: "file://", with: ""), expanded = normalizedRepoPath((cleanInput as NSString).expandingTildeInPath); let repoName = cleanInput.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
+        guard !input.isEmpty else { return }
+        let cleanInput = input.replacingOccurrences(of: "file://", with: "")
+        let expanded = normalizedRepoPath((cleanInput as NSString).expandingTildeInPath)
+        let repoName = repoName(from: cleanInput)
         if FileManager.default.fileExists(atPath: expanded) {
             let repo = TrackedRepo(url: cleanInput, path: expanded, name: repoName)
             if let existingIndex = existingRepoIndex(for: repo) {
-                config.selectedRepoIndex = existingIndex
-                saveConfig()
-                reloadUI(status: "Already Tracking", show: true)
+                if normalizedRepoPath(config.repos[existingIndex].path) != expanded {
+                    updateTrackedRepo(repo, at: existingIndex)
+                } else {
+                    config.selectedRepoIndex = existingIndex
+                    saveConfig()
+                    reloadUI(status: "Already Tracking", show: true)
+                }
             } else {
                 addAndSelectRepo(repo)
             }
@@ -1215,8 +1258,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 reloadUI(status: "Already Tracking", show: true)
                 return
             }
-            let path = normalizedRepoPath("\(trackerRoot)/\(repoName)"); setStatus("⌛ Cloning..."); DispatchQueue.global(qos: .userInitiated).async {
-                if FileManager.default.fileExists(atPath: path) { try? FileManager.default.removeItem(atPath: path) }
+            guard let destinationParent = promptForCloneDestination(repoName: repoName) else {
+                reloadUI(status: "Clone Cancelled", show: true)
+                return
+            }
+            let path = normalizedRepoPath((destinationParent as NSString).appendingPathComponent(repoName))
+            if FileManager.default.fileExists(atPath: path) {
+                if isGitRepository(path: path) {
+                    let repo = TrackedRepo(url: cleanInput, path: path, name: repoName)
+                    if let existingIndex = existingRepoIndex(for: repo) {
+                        updateTrackedRepo(repo, at: existingIndex)
+                    } else {
+                        addAndSelectRepo(repo)
+                    }
+                } else {
+                    reloadUI(status: "❌ Destination Already Exists", show: true)
+                }
+                return
+            }
+            setStatus("⌛ Cloning...")
+            DispatchQueue.global(qos: .userInitiated).async {
                 let result = self.runShell(args: ["clone", cleanInput, path], includeGitHubAuth: self.isGitHubURL(cleanInput))
                 DispatchQueue.main.async {
                     if result.success {
@@ -1238,6 +1299,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let normalizedPath = normalizedRepoPath(repo.path)
         let normalizedURL = normalizedRemoteURL(repo.url)
         if let existingIndex = config.repos.firstIndex(where: { normalizedRepoPath($0.path) == normalizedPath || (!normalizedURL.isEmpty && normalizedRemoteURL($0.url) == normalizedURL) }) {
+            config.repos[existingIndex] = TrackedRepo(url: repo.url, path: normalizedPath, name: repo.name)
             config.selectedRepoIndex = existingIndex
         } else {
             config.repos.append(repo)
