@@ -1,6 +1,9 @@
 import AppKit
 import Foundation
+import Security
 import SwiftUI
+
+let githubOAuthClientID = "Ov23liMEarmthhySRg1r"
 
 class FlippedView: NSView { override var isFlipped: Bool { return true } }
 class FlippedStackView: NSStackView { override var isFlipped: Bool { return true } }
@@ -465,8 +468,75 @@ class StackedStatusBar: NSView {
 let trackerRoot = "/Users/dessy/Documents/sidehustle/GitTrackerTracker"; let configFilePath = "\(trackerRoot)/config.json"
 struct TrackedRepo: Codable, Equatable { var url: String; var path: String; var name: String }
 struct Config: Codable {
-    var repos: [TrackedRepo] = []; var selectedRepoIndex = 0; var username: String?; var token: String?
+    var repos: [TrackedRepo] = []; var selectedRepoIndex = 0; var githubLogin: String?
+    var username: String?; var token: String?
     var currentRepo: TrackedRepo? { if repos.isEmpty { return nil }; return (selectedRepoIndex >= 0 && selectedRepoIndex < repos.count) ? repos[selectedRepoIndex] : repos.first }
+}
+
+enum GitHubAuthError: LocalizedError {
+    case missingClientID
+    case invalidVerificationURL
+    case server(String)
+    case cancelled
+    case missingAccessToken
+    
+    var errorDescription: String? {
+        switch self {
+        case .missingClientID: return "Set your GitHub OAuth client ID first."
+        case .invalidVerificationURL: return "GitHub returned an invalid verification URL."
+        case .server(let message): return message
+        case .cancelled: return "GitHub sign-in was cancelled."
+        case .missingAccessToken: return "GitHub did not return an access token."
+        }
+    }
+}
+
+struct GitHubDeviceCodeResponse: Decodable {
+    let device_code: String
+    let user_code: String
+    let verification_uri: String
+    let expires_in: Int
+    let interval: Int
+}
+
+struct GitHubAccessTokenResponse: Decodable {
+    let access_token: String?
+    let token_type: String?
+    let scope: String?
+    let error: String?
+    let error_description: String?
+    let interval: Int?
+}
+
+struct GitHubUserResponse: Decodable {
+    let login: String
+}
+
+enum KeychainHelper {
+    static let service = "com.gittracker.github"
+    static let tokenAccount = "oauth-token"
+    
+    static func saveToken(_ token: String) {
+        guard let data = token.data(using: .utf8) else { return }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: tokenAccount]
+        SecItemDelete(query as CFDictionary)
+        var saveQuery = query
+        saveQuery[kSecValueData as String] = data
+        saveQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        SecItemAdd(saveQuery as CFDictionary, nil)
+    }
+    
+    static func loadToken() -> String? {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: tokenAccount, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    
+    static func deleteToken() {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: tokenAccount]
+        SecItemDelete(query as CFDictionary)
+    }
 }
 
 struct VisualEffectView: NSViewRepresentable {
@@ -477,30 +547,60 @@ struct VisualEffectView: NSViewRepresentable {
 }
 
 struct AuthView: View {
-    @State private var username: String; @State private var token: String
-    var onSave: (String, String) -> Void; var onCancel: () -> Void
-    init(username: String?, token: String?, onSave: @escaping (String, String) -> Void, onCancel: @escaping () -> Void) {
-        _username = State(initialValue: username ?? ""); _token = State(initialValue: token ?? "")
-        self.onSave = onSave; self.onCancel = onCancel
+    let githubLogin: String?
+    var onStart: () -> Void; var onSignOut: () -> Void; var onCancel: () -> Void
+    init(githubLogin: String?, onStart: @escaping () -> Void, onSignOut: @escaping () -> Void, onCancel: @escaping () -> Void) {
+        self.githubLogin = githubLogin
+        self.onStart = onStart; self.onSignOut = onSignOut; self.onCancel = onCancel
     }
     var body: some View {
         VStack(spacing: 20) {
-            Text("GitHub Credentials").font(.headline)
+            Text("GitHub Sign In").font(.headline)
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("USERNAME").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
-                    TextField("Username", text: $username).textFieldStyle(.plain).padding(8).background(Color.white.opacity(0.1)).cornerRadius(6)
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("PERSONAL ACCESS TOKEN").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
-                    SecureField("Token", text: $token).textFieldStyle(.plain).padding(8).background(Color.white.opacity(0.1)).cornerRadius(6)
-                }
+                Text(githubLogin == nil ? "Git Tracker will open GitHub in your browser and store the approved access token in your macOS Keychain." : "Signed in as \(githubLogin!). Signing in again will refresh the GitHub session.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 12) {
                 Button("Cancel", action: onCancel).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.white.opacity(0.1)).cornerRadius(6)
-                Button("Save") { onSave(username, token) }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.blue).foregroundColor(.white).cornerRadius(6)
+                if githubLogin != nil {
+                    Button("Sign Out", action: onSignOut).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.red.opacity(0.8)).foregroundColor(.white).cornerRadius(6)
+                }
+                Button(githubLogin == nil ? "Sign In" : "Refresh") { onStart() }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.blue).foregroundColor(.white).cornerRadius(6)
             }
-        }.padding(20).frame(width: 280).background(VisualEffectView())
+        }.padding(20).frame(width: 320).background(VisualEffectView())
+    }
+}
+
+struct DeviceFlowView: View {
+    let userCode: String
+    let verificationURL: String
+    var onOpenBrowser: () -> Void
+    var onCancel: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 18) {
+            Text("Authorize GitHub").font(.headline)
+            Text("Enter this code in GitHub to finish signing in.")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            Text(userCode)
+                .font(.system(size: 24, weight: .bold, design: .monospaced))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(Color.white.opacity(0.08))
+                .cornerRadius(10)
+            Text(verificationURL)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            HStack(spacing: 12) {
+                Button("Cancel", action: onCancel).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.white.opacity(0.1)).cornerRadius(6)
+                Button("Open GitHub", action: onOpenBrowser).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.blue).foregroundColor(.white).cornerRadius(6)
+            }
+        }.padding(20).frame(width: 320).background(VisualEffectView())
     }
 }
 
@@ -675,13 +775,14 @@ struct StashPopPromptView: View {
 
 class GitTrackerController: NSViewController {
     var config: Config; var onAction: (String) -> Void
+    let isAuthenticated: Bool
     var statusHostingView: NSHostingView<StatusBadgeView>!
     var selectionHostingView: NSHostingView<ProjectSelectionView>!
     var summaryBar: StackedStatusBar!; var summaryLabel: NSTextField!
     var upToDateLabel: NSTextField!, modifiedLabel: NSTextField!, aheadLabel: NSTextField!, behindLabel: NSTextField!
     var syncBtn: NSButton!; var historyArea: NSView!
     
-    init(config: Config, onAction: @escaping (String) -> Void) { self.config = config; self.onAction = onAction; super.init(nibName: nil, bundle: nil) }
+    init(config: Config, isAuthenticated: Bool, onAction: @escaping (String) -> Void) { self.config = config; self.isAuthenticated = isAuthenticated; self.onAction = onAction; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func loadView() { let effectView = NSVisualEffectView(); effectView.blendingMode = .behindWindow; effectView.state = .active; effectView.material = .hudWindow; self.view = effectView; self.view.setFrameSize(NSSize(width: 480, height: 820)) }
     override func viewDidLoad() { super.viewDidLoad(); setupUI() }
@@ -697,7 +798,7 @@ class GitTrackerController: NSViewController {
         
         headerStack.addArrangedSubview(NSView()); headerStack.arrangedSubviews.last?.setContentHuggingPriority(.defaultLow, for: .horizontal)
         
-        statusHostingView = NSHostingView(rootView: StatusBadgeView(isActive: config.token != nil, text: config.token != nil ? "Auth Active" : "No Auth Set"))
+        statusHostingView = NSHostingView(rootView: StatusBadgeView(isActive: isAuthenticated, text: isAuthenticated ? "Auth Active" : "No Auth Set"))
         statusHostingView.translatesAutoresizingMaskIntoConstraints = false; headerStack.addArrangedSubview(statusHostingView); rootStack.addArrangedSubview(headerStack)
         
         let summaryBox = NSBox(); summaryBox.boxType = .custom; summaryBox.fillColor = NSColor.white.withAlphaComponent(0.05); summaryBox.cornerRadius = 12; summaryBox.borderWidth = 1; summaryBox.borderColor = NSColor.white.withAlphaComponent(0.1)
@@ -847,7 +948,9 @@ class GitTrackerController: NSViewController {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength); let popover = NSPopover(); let dialogPopover = NSPopover(); var config = Config()
+    var activeAuthSessionID: UUID?
     func applicationDidFinishLaunching(_ notification: Notification) {
+        migrateConfig()
         loadConfig()
         
         // Expert UI: Generate App Icon (Blue Background + White Glyph)
@@ -870,7 +973,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if #available(macOS 11.0, *), let img = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil) { img.isTemplate = true; b.image = img } else { b.title = "ᚠ" }
             b.action = #selector(togglePopover); b.target = self
         }
-        popover.contentViewController = GitTrackerController(config: config, onAction: handleAction); popover.behavior = .transient
+        popover.contentViewController = GitTrackerController(config: config, isAuthenticated: hasGitHubAuth, onAction: handleAction); popover.behavior = .transient
         dialogPopover.behavior = .applicationDefined
         setupEditMenu()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in self.updateAllStatus() }    }
@@ -885,13 +988,99 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             (popover.contentViewController as? GitTrackerController)?.updateUIState(); updateAllStatus()
         }
     }
+    var hasGitHubAuth: Bool { !(config.githubLogin?.isEmpty ?? true) && !(KeychainHelper.loadToken()?.isEmpty ?? true) }
+    
+    func ensureAskPassScript() -> String? {
+        let path = "\(trackerRoot)/gittracker-askpass.sh"
+        let body = """
+        #!/bin/sh
+        case "$1" in
+          *Username*) printf "%s" "$GITTRACKER_GH_USER" ;;
+          *) printf "%s" "$GITTRACKER_GH_TOKEN" ;;
+        esac
+        """
+        if !FileManager.default.fileExists(atPath: path) || ((try? String(contentsOfFile: path, encoding: .utf8)) != body) {
+            try? body.write(toFile: path, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: path)
+        }
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+    
+    func githubEnvironment() -> [String: String]? {
+        guard let login = config.githubLogin, let token = KeychainHelper.loadToken(), let askPass = ensureAskPassScript() else { return nil }
+        var env = ProcessInfo.processInfo.environment
+        env["GIT_ASKPASS"] = askPass
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env["GITTRACKER_GH_USER"] = login
+        env["GITTRACKER_GH_TOKEN"] = token
+        return env
+    }
+    
     @discardableResult
-    func runShell(args: [String]) -> (output: String, success: Bool) {
+    func runShell(args: [String], includeGitHubAuth: Bool = false) -> (output: String, success: Bool) {
         let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = args; let pipe = Pipe(); task.standardOutput = pipe; task.standardError = pipe
+        if includeGitHubAuth, let env = githubEnvironment() { task.environment = env }
         do { try task.run(); task.waitUntilExit() } catch { return ("", false) }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return (output, task.terminationStatus == 0)
+    }
+    
+    func isGitHubURL(_ value: String) -> Bool {
+        let lower = value.lowercased()
+        return lower.contains("github.com") || lower.contains("git@github.com:")
+    }
+    
+    func remoteUsesGitHub(repoPath: String) -> Bool {
+        let remote = runShell(args: ["-C", repoPath, "remote", "get-url", "origin"]).output
+        return isGitHubURL(remote)
+    }
+    
+    func normalizedRepoPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+    
+    func normalizedRemoteURL(_ url: String) -> String {
+        var value = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return "" }
+        if value.hasPrefix("git@github.com:") {
+            value = "https://github.com/" + value.replacingOccurrences(of: "git@github.com:", with: "")
+        }
+        if value.hasPrefix("ssh://git@github.com/") {
+            value = "https://github.com/" + value.replacingOccurrences(of: "ssh://git@github.com/", with: "")
+        }
+        if value.hasPrefix("https://") || value.hasPrefix("http://") {
+            var components = URLComponents(string: value)
+            components?.user = nil
+            components?.password = nil
+            value = components?.string ?? value
+        }
+        while value.hasSuffix("/") { value.removeLast() }
+        if value.hasSuffix(".git") { value.removeLast(4) }
+        return isGitHubURL(value) ? value.lowercased() : value
+    }
+    
+    func repoOriginURL(path: String) -> String? {
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        let result = runShell(args: ["-C", path, "remote", "get-url", "origin"])
+        guard result.success else { return nil }
+        let normalized = normalizedRemoteURL(result.output)
+        return normalized.isEmpty ? nil : normalized
+    }
+    
+    func existingRepoIndex(for repo: TrackedRepo) -> Int? {
+        let candidatePath = normalizedRepoPath(repo.path)
+        let candidateURL = normalizedRemoteURL(repo.url)
+        for (index, existing) in config.repos.enumerated() {
+            if normalizedRepoPath(existing.path) == candidatePath { return index }
+            let existingURL = normalizedRemoteURL(existing.url)
+            if !candidateURL.isEmpty && candidateURL == existingURL { return index }
+            if let existingOrigin = repoOriginURL(path: existing.path) {
+                if !candidateURL.isEmpty && candidateURL == existingOrigin { return index }
+                if let candidateOrigin = repoOriginURL(path: repo.path), candidateOrigin == existingOrigin { return index }
+            }
+        }
+        return nil
     }
     
     func handleAction(_ type: String) {
@@ -948,7 +1137,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func setStatus(_ text: String, color: NSColor = .secondaryLabelColor) {
         DispatchQueue.main.async { 
             if let vc = self.popover.contentViewController as? GitTrackerController { 
-                vc.statusHostingView.rootView = StatusBadgeView(isActive: self.config.token != nil, text: text) 
+                vc.statusHostingView.rootView = StatusBadgeView(isActive: self.hasGitHubAuth, text: text) 
             }
             if text.contains("❌") { self.showPopover() }
         }
@@ -978,11 +1167,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     func promptForAuth() {
-        let authView = AuthView(username: config.username, token: config.token, onSave: { u, t in
-            self.config.username = u.trimmingCharacters(in: .whitespaces)
-            self.config.token = t.trimmingCharacters(in: .whitespaces)
-            self.saveConfig(); self.reloadUI(); self.dialogPopover.performClose(nil)
-        }, onCancel: { self.dialogPopover.performClose(nil) })
+        let authView = AuthView(githubLogin: config.githubLogin, onStart: {
+            self.startGitHubSignIn()
+        }, onSignOut: {
+            self.signOutGitHub()
+            self.dialogPopover.performClose(nil)
+        }, onCancel: { self.cancelGitHubSignIn(closePopover: true) })
         self.popover.performClose(nil)
         dialogPopover.contentViewController = NSHostingController(rootView: authView)
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
@@ -1000,40 +1190,69 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
     }
     func trackRepo(input: String) {
-        guard !input.isEmpty else { return }; let cleanInput = input.replacingOccurrences(of: "file://", with: ""), expanded = (cleanInput as NSString).expandingTildeInPath; let repoName = cleanInput.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
-        if FileManager.default.fileExists(atPath: expanded) { addAndSelectRepo(TrackedRepo(url: cleanInput, path: expanded, name: repoName)) }
+        guard !input.isEmpty else { return }; let cleanInput = input.replacingOccurrences(of: "file://", with: ""), expanded = normalizedRepoPath((cleanInput as NSString).expandingTildeInPath); let repoName = cleanInput.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"
+        if FileManager.default.fileExists(atPath: expanded) {
+            let repo = TrackedRepo(url: cleanInput, path: expanded, name: repoName)
+            if let existingIndex = existingRepoIndex(for: repo) {
+                config.selectedRepoIndex = existingIndex
+                saveConfig()
+                reloadUI(status: "Already Tracking", show: true)
+            } else {
+                addAndSelectRepo(repo)
+            }
+        }
         else {
-            let path = "\(trackerRoot)/\(repoName)"; setStatus("⌛ Cloning..."); DispatchQueue.global(qos: .userInitiated).async {
-                var url = cleanInput; if let tok = self.config.token, url.contains("github.com") { url = url.replacingOccurrences(of: "https://", with: "https://\(tok)@") }
+            let normalizedInputURL = normalizedRemoteURL(cleanInput)
+            if let existingIndex = config.repos.enumerated().first(where: { _, existing in normalizedRemoteURL(existing.url) == normalizedInputURL || repoOriginURL(path: existing.path) == normalizedInputURL })?.offset {
+                config.selectedRepoIndex = existingIndex
+                saveConfig()
+                reloadUI(status: "Already Tracking", show: true)
+                return
+            }
+            let path = normalizedRepoPath("\(trackerRoot)/\(repoName)"); setStatus("⌛ Cloning..."); DispatchQueue.global(qos: .userInitiated).async {
                 if FileManager.default.fileExists(atPath: path) { try? FileManager.default.removeItem(atPath: path) }
-                let task = Process(); task.launchPath = "/usr/bin/git"; task.arguments = ["clone", url, path]; task.launch(); task.waitUntilExit()
-                DispatchQueue.main.async { if task.terminationStatus == 0 { self.addAndSelectRepo(TrackedRepo(url: cleanInput, path: path, name: repoName)) } }
+                let result = self.runShell(args: ["clone", cleanInput, path], includeGitHubAuth: self.isGitHubURL(cleanInput))
+                DispatchQueue.main.async {
+                    if result.success {
+                        let repo = TrackedRepo(url: cleanInput, path: path, name: repoName)
+                        if let existingIndex = self.existingRepoIndex(for: repo) {
+                            self.config.selectedRepoIndex = existingIndex
+                            self.saveConfig()
+                            self.reloadUI(status: "Already Tracking", show: true)
+                        } else {
+                            self.addAndSelectRepo(repo)
+                        }
+                    }
+                    else { self.reloadUI(status: "❌ \(result.output.components(separatedBy: "\n").first { !$0.isEmpty } ?? "Clone Failed")", show: true) }
+                }
             }
         }
     }
-    func addAndSelectRepo(_ repo: TrackedRepo) { if !config.repos.contains(where: { $0.path == repo.path }) { config.repos.append(repo) }; config.selectedRepoIndex = config.repos.firstIndex(where: { $0.path == repo.path }) ?? 0; saveConfig(); reloadUI(show: true) }
-    func getAuthenticatedRemoteUrl(repoPath: String) -> String {
-        let result = runShell(args: ["-C", repoPath, "remote", "get-url", "origin"])
-        guard result.success else { return "origin" }
-        let url = result.output
-        if url.contains("github.com") && !url.contains("@"), let token = config.token, !token.isEmpty {
-            return url.replacingOccurrences(of: "https://", with: "https://\(token)@")
+    func addAndSelectRepo(_ repo: TrackedRepo) {
+        let normalizedPath = normalizedRepoPath(repo.path)
+        let normalizedURL = normalizedRemoteURL(repo.url)
+        if let existingIndex = config.repos.firstIndex(where: { normalizedRepoPath($0.path) == normalizedPath || (!normalizedURL.isEmpty && normalizedRemoteURL($0.url) == normalizedURL) }) {
+            config.selectedRepoIndex = existingIndex
+        } else {
+            config.repos.append(repo)
+            config.selectedRepoIndex = config.repos.count - 1
         }
-        return "origin"
+        saveConfig()
+        reloadUI(show: true)
     }
 
     func refreshRepo() {
         guard let currentRepo = config.currentRepo else { return }
         DispatchQueue.main.async { if let vc = self.popover.contentViewController as? GitTrackerController { vc.syncBtn.isEnabled = false; vc.syncBtn.title = "Fetching..."; self.setStatus("⌛ Fetching...") } }
         DispatchQueue.global(qos: .userInitiated).async {
-            let authUrl = self.getAuthenticatedRemoteUrl(repoPath: currentRepo.path)
-            let fetchResult = self.runShell(args: ["-C", currentRepo.path, "fetch", authUrl])
-            let pullResult = self.runShell(args: ["-C", currentRepo.path, "pull", authUrl])
+            let useAuth = self.remoteUsesGitHub(repoPath: currentRepo.path)
+            let fetchResult = self.runShell(args: ["-C", currentRepo.path, "fetch", "origin"], includeGitHubAuth: useAuth)
+            let pullResult = self.runShell(args: ["-C", currentRepo.path, "pull", "origin"], includeGitHubAuth: useAuth)
             DispatchQueue.main.async { 
                 if fetchResult.success && pullResult.success {
                     self.reloadUI(status: "✅ Fetch Complete", show: true)
                     self.updateAllStatus()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.setStatus("Auth Active") }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.setStatus(self.hasGitHubAuth ? "Auth Active" : "Ready") }
                 } else {
                     let err = (!fetchResult.success ? fetchResult.output : pullResult.output).components(separatedBy: "\n").first { !$0.isEmpty } ?? "Sync Failed"
                     self.reloadUI(status: "❌ \(err)", show: true)
@@ -1144,8 +1363,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let currentRepo = config.currentRepo else { return }
         setStatus("⌛ Pushing...")
         DispatchQueue.global(qos: .userInitiated).async {
-            let authUrl = self.getAuthenticatedRemoteUrl(repoPath: currentRepo.path)
-            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "push", "-u", authUrl, "HEAD"])
+            let useAuth = self.remoteUsesGitHub(repoPath: currentRepo.path)
+            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "push", "-u", "origin", "HEAD"], includeGitHubAuth: useAuth)
             DispatchQueue.main.async {
                 if success {
                     self.reloadUI(status: "✅ Push Complete", show: true)
@@ -1236,18 +1455,172 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
-    func migrateConfig() {
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if json["repos"] != nil { return }; var m = Config(); if let url = json["repoUrl"] as? String, let path = json["repoPath"] as? String { let name = url.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"; m.repos.append(TrackedRepo(url: url, path: path, name: name)) }
-            if let u = json["username"] as? String { m.username = u }; if let t = json["token"] as? String { m.token = t }; self.config = m; saveConfig()
+    
+    func postFormJSON<T: Decodable>(_ type: T.Type, urlString: String, parameters: [String: String]) throws -> T {
+        guard let url = URL(string: urlString) else { throw GitHubAuthError.server("Invalid GitHub URL.") }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        var components = URLComponents()
+        components.queryItems = parameters.map { URLQueryItem(name: $0.key, value: $0.value) }
+        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+        return try performJSONRequest(type, request: request)
+    }
+    
+    func getJSON<T: Decodable>(_ type: T.Type, urlString: String, bearerToken: String) throws -> T {
+        guard let url = URL(string: urlString) else { throw GitHubAuthError.server("Invalid GitHub URL.") }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        return try performJSONRequest(type, request: request)
+    }
+    
+    func performJSONRequest<T: Decodable>(_ type: T.Type, request: URLRequest) throws -> T {
+        let semaphore = DispatchSemaphore(value: 0)
+        var responseData: Data?
+        var responseError: Error?
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            responseData = data
+            responseError = error
+            semaphore.signal()
+        }.resume()
+        semaphore.wait()
+        if let error = responseError { throw error }
+        guard let data = responseData else { throw GitHubAuthError.server("GitHub returned no data.") }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+    
+    func startGitHubSignIn() {
+        let clientID = githubOAuthClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clientID.isEmpty else { setStatus("❌ Missing Client ID", color: .systemRed); return }
+        let sessionID = UUID()
+        activeAuthSessionID = sessionID
+        setStatus("⌛ Connecting GitHub...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let response = try self.postFormJSON(GitHubDeviceCodeResponse.self, urlString: "https://github.com/login/device/code", parameters: ["client_id": clientID, "scope": "repo read:user"])
+                guard let url = URL(string: response.verification_uri) else { throw GitHubAuthError.invalidVerificationURL }
+                DispatchQueue.main.async {
+                    let deviceView = DeviceFlowView(userCode: response.user_code, verificationURL: response.verification_uri, onOpenBrowser: {
+                        NSWorkspace.shared.open(url)
+                    }, onCancel: {
+                        self.cancelGitHubSignIn(closePopover: true)
+                    })
+                    self.dialogPopover.contentViewController = NSHostingController(rootView: deviceView)
+                    self.setStatus("⌛ Waiting for GitHub...")
+                    NSWorkspace.shared.open(url)
+                }
+                try self.pollGitHubDeviceFlow(sessionID: sessionID, clientID: clientID, deviceCode: response.device_code, interval: max(response.interval, 5))
+            } catch {
+                DispatchQueue.main.async {
+                    self.activeAuthSessionID = nil
+                    self.reloadUI(status: "❌ \(error.localizedDescription)", show: true)
+                    self.dialogPopover.performClose(nil)
+                }
+            }
         }
     }
-    func loadConfig() { if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let decoded = try? JSONDecoder().decode(Config.self, from: data) { self.config = decoded } }
-    func saveConfig() { if let data = try? JSONEncoder().encode(config) { try? data.write(to: URL(fileURLWithPath: configFilePath)) } }
+    
+    func pollGitHubDeviceFlow(sessionID: UUID, clientID: String, deviceCode: String, interval: Int) throws {
+        var nextInterval = interval
+        while activeAuthSessionID == sessionID {
+            Thread.sleep(forTimeInterval: TimeInterval(nextInterval))
+            let tokenResponse = try postFormJSON(GitHubAccessTokenResponse.self, urlString: "https://github.com/login/oauth/access_token", parameters: ["client_id": clientID, "device_code": deviceCode, "grant_type": "urn:ietf:params:oauth:grant-type:device_code"])
+            if let accessToken = tokenResponse.access_token, !accessToken.isEmpty {
+                let user = try getJSON(GitHubUserResponse.self, urlString: "https://api.github.com/user", bearerToken: accessToken)
+                DispatchQueue.main.async {
+                    guard self.activeAuthSessionID == sessionID else { return }
+                    KeychainHelper.saveToken(accessToken)
+                    self.config.githubLogin = user.login
+                    self.config.username = nil
+                    self.config.token = nil
+                    self.activeAuthSessionID = nil
+                    self.saveConfig()
+                    self.dialogPopover.performClose(nil)
+                    self.reloadUI(status: "✅ Signed in as \(user.login)", show: true)
+                }
+                return
+            }
+            switch tokenResponse.error {
+            case "authorization_pending":
+                continue
+            case "slow_down":
+                nextInterval = tokenResponse.interval ?? (nextInterval + 5)
+            case "access_denied":
+                throw GitHubAuthError.cancelled
+            case "expired_token":
+                throw GitHubAuthError.server("GitHub sign-in expired. Try again.")
+            case .some(let error):
+                throw GitHubAuthError.server(tokenResponse.error_description ?? error)
+            case .none:
+                throw GitHubAuthError.missingAccessToken
+            }
+        }
+        throw GitHubAuthError.cancelled
+    }
+    
+    func cancelGitHubSignIn(closePopover: Bool) {
+        activeAuthSessionID = nil
+        if closePopover { dialogPopover.performClose(nil) }
+        setStatus(hasGitHubAuth ? "Auth Active" : "No Auth Set")
+    }
+    
+    func signOutGitHub() {
+        activeAuthSessionID = nil
+        KeychainHelper.deleteToken()
+        config.githubLogin = nil
+        config.username = nil
+        config.token = nil
+        saveConfig()
+        reloadUI(status: "Signed Out", show: true)
+    }
+    func migrateConfig() {
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            var shouldSave = false
+            if json["repos"] == nil {
+                var m = Config()
+                if let url = json["repoUrl"] as? String, let path = json["repoPath"] as? String { let name = url.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"; m.repos.append(TrackedRepo(url: url, path: path, name: name)) }
+                if let u = json["username"] as? String { m.githubLogin = u }
+                if let t = json["token"] as? String, !t.isEmpty { KeychainHelper.saveToken(t) }
+                self.config = m
+                saveConfig()
+                return
+            }
+            if let legacyUser = json["username"] as? String, config.githubLogin == nil {
+                config.githubLogin = legacyUser
+                shouldSave = true
+            }
+            if let legacyToken = json["token"] as? String, !legacyToken.isEmpty {
+                KeychainHelper.saveToken(legacyToken)
+                config.token = nil
+                config.username = nil
+                shouldSave = true
+            }
+            if shouldSave { saveConfig() }
+        }
+    }
+    func loadConfig() {
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let decoded = try? JSONDecoder().decode(Config.self, from: data) {
+            self.config = decoded
+            if config.githubLogin == nil { config.githubLogin = config.username }
+            if let legacyToken = config.token, !legacyToken.isEmpty {
+                KeychainHelper.saveToken(legacyToken)
+                config.token = nil
+                config.username = nil
+                saveConfig()
+            }
+        }
+    }
+    func saveConfig() {
+        config.token = nil
+        config.username = nil
+        if let data = try? JSONEncoder().encode(config) { try? data.write(to: URL(fileURLWithPath: configFilePath)) }
+    }
     func reloadUI(status: String? = nil, show: Bool = false) { 
         DispatchQueue.main.async { 
             self.loadConfig(); 
-            let vc = GitTrackerController(config: self.config, onAction: self.handleAction); 
+            let vc = GitTrackerController(config: self.config, isAuthenticated: self.hasGitHubAuth, onAction: self.handleAction); 
             self.popover.contentViewController = vc; 
             if let s = status { self.setStatus(s) } 
             if show { self.showPopover() }

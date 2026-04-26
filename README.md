@@ -10,7 +10,7 @@ GitTracker is a beautiful, native macOS menu bar app designed to help you track 
 - **Multi-Repo Support:** Track an unlimited number of local repositories or remote GitHub URLs.
 - **Visual Git Graph:** View your commit history with a VS Code-style connected commit graph, branch pills, and author tags.
 - **Branch Filtering:** Easily filter commits by selecting specific branches or view all branches combined.
-- **Seamless Authentication:** Add your GitHub Username and Personal Access Token (PAT) once, and GitTracker securely handles all your private repository clones and syncs.
+- **Seamless Authentication:** Sign in with GitHub in your browser, then let GitTracker securely handle private repository clones and syncs without asking users for PATs.
 - **Instant Sync:** Pull the latest changes for your active repository with a single click.
 
 ## Installation
@@ -67,7 +67,7 @@ GitTracker is a beautiful, native macOS menu bar app designed to help you track 
 
 ## Usage
 
-1. **Auth:** Click the "Auth" button and enter your GitHub username and a Personal Access Token (with `repo` permissions) if you plan to track private repositories.
+1. **Auth:** Click the "Auth" button and complete the browser-based GitHub sign-in flow.
 2. **Track:** Click the "Add" button. You can either paste an HTTPS GitHub URL or click "Choose Local Folder..." to track a repository already cloned on your Mac.
 3. **Switch Repos:** Use the "📁 Repo:" dropdown to switch between your active projects.
 4. **Switch Branches:** Use the "🌿 Branch:" dropdown to filter the history graph to a specific branch.
@@ -78,7 +78,7 @@ GitTracker acts as a lightweight wrapper around your local `git` installation.
 
 - When tracking a remote URL, GitTracker clones a background copy to `~/Documents/sidehustle/GitTrackerTracker`.
 - When tracking a local folder, GitTracker simply reads the `.git` data from that folder directly.
-- All configuration (including your PAT) is stored locally in `config.json` in the tracker directory. This file is intentionally `.gitignore`d.
+- Repository configuration is stored locally in `config.json` in the tracker directory, while the GitHub OAuth token is stored in the macOS Keychain.
 
 ## License
 
