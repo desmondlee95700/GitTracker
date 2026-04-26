@@ -515,6 +515,110 @@ struct AddRepoView: View {
     }
 }
 
+struct CommitView: View {
+    @State private var message: String = ""
+    var onCommit: (String) -> Void
+    var onCancel: () -> Void
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Commit Changes").font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("COMMIT MESSAGE").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                if #available(macOS 13.0, *) {
+                    TextEditor(text: $message)
+                        .font(.system(size: 12))
+                        .padding(4)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(6)
+                        .frame(height: 80)
+                        .scrollContentBackground(.hidden)
+                } else {
+                    TextEditor(text: $message)
+                        .font(.system(size: 12))
+                        .padding(4)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(6)
+                        .frame(height: 80)
+                }
+            }
+            HStack(spacing: 12) {
+                Button("Cancel", action: onCancel).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.white.opacity(0.1)).cornerRadius(6)
+                Button("Commit") { onCommit(message) }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.blue).foregroundColor(.white).cornerRadius(6).disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }.padding(20).frame(width: 320).background(VisualEffectView())
+    }
+}
+
+struct RebaseView: View {
+    let branches: [String]
+    @State private var selectedBranch: String
+    var onRebase: (String) -> Void
+    var onCancel: () -> Void
+    
+    init(branches: [String], onRebase: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+        self.branches = branches
+        _selectedBranch = State(initialValue: branches.first ?? "")
+        self.onRebase = onRebase
+        self.onCancel = onCancel
+    }
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Rebase Branch").font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("TARGET BRANCH").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                Picker("", selection: $selectedBranch) {
+                    ForEach(branches, id: \.self) { branch in
+                        Text(branch).tag(branch)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+            HStack(spacing: 12) {
+                Button("Cancel", action: onCancel).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.white.opacity(0.1)).cornerRadius(6)
+                Button("Rebase") { onRebase(selectedBranch) }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.blue).foregroundColor(.white).cornerRadius(6).disabled(selectedBranch.isEmpty)
+            }
+        }.padding(20).frame(width: 280).background(VisualEffectView())
+    }
+}
+
+struct MergeView: View {
+    let branches: [String]
+    let currentBranch: String
+    @State private var selectedBranch: String
+    var onMerge: (String) -> Void
+    var onCancel: () -> Void
+    
+    init(branches: [String], currentBranch: String, onMerge: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+        self.branches = branches
+        self.currentBranch = currentBranch
+        _selectedBranch = State(initialValue: branches.first ?? "")
+        self.onMerge = onMerge
+        self.onCancel = onCancel
+    }
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Merge Branch").font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("MERGE INTO \(currentBranch.uppercased())").font(.system(size: 9, weight: .bold)).foregroundColor(.secondary)
+                Picker("", selection: $selectedBranch) {
+                    ForEach(branches, id: \.self) { branch in
+                        Text(branch).tag(branch)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+            HStack(spacing: 12) {
+                Button("Cancel", action: onCancel).buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.white.opacity(0.1)).cornerRadius(6)
+                Button("Merge") { onMerge(selectedBranch) }.buttonStyle(.plain).padding(.horizontal, 12).padding(.vertical, 6).background(Color.blue).foregroundColor(.white).cornerRadius(6).disabled(selectedBranch.isEmpty)
+            }
+        }.padding(20).frame(width: 280).background(VisualEffectView())
+    }
+}
+
 class GitTrackerController: NSViewController {
     var config: Config; var onAction: (String) -> Void
     var statusHostingView: NSHostingView<StatusBadgeView>!
@@ -561,7 +665,8 @@ class GitTrackerController: NSViewController {
         
         let footerBox = NSBox(); footerBox.boxType = .custom; footerBox.fillColor = NSColor.black.withAlphaComponent(0.2); footerBox.cornerRadius = 12; footerBox.borderWidth = 1; footerBox.borderColor = NSColor.white.withAlphaComponent(0.1)
         let footer = NSStackView(); footer.distribution = .fillEqually; footer.spacing = 12; footer.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
-        syncBtn = createBtn(title: "Sync", symbol: "arrow.triangle.2.circlepath", action: #selector(didSync)); syncBtn.bezelStyle = .texturedRounded; footer.addArrangedSubview(syncBtn)
+        syncBtn = createBtn(title: "Fetch origin", symbol: "arrow.triangle.2.circlepath", action: #selector(didSync)); syncBtn.bezelStyle = .texturedRounded; footer.addArrangedSubview(syncBtn)
+        let actionsBtn = createBtn(title: "Actions", symbol: "ellipsis.circle", action: #selector(showActionsMenu)); actionsBtn.bezelStyle = .texturedRounded; footer.addArrangedSubview(actionsBtn)
         let authBtn = createBtn(title: "Auth", symbol: "person.fill", action: #selector(didAuth)); authBtn.bezelStyle = .texturedRounded; footer.addArrangedSubview(authBtn)
         let quitBtn = createBtn(title: "Quit", symbol: "power", action: #selector(didQuit)); quitBtn.bezelStyle = .texturedRounded; quitBtn.contentTintColor = .systemRed; footer.addArrangedSubview(quitBtn)
         footerBox.addSubview(footer); footer.translatesAutoresizingMaskIntoConstraints = false
@@ -639,6 +744,19 @@ class GitTrackerController: NSViewController {
         return b
     }
     @objc func didSync() { onAction("sync") }; @objc func didTrack() { onAction("track") }; @objc func didAuth() { onAction("auth") }; @objc func didClear() { onAction("clear") }; @objc func didQuit() { onAction("quit") }
+    @objc func showActionsMenu(_ sender: NSButton) {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Commit...", action: #selector(didCommit), keyEquivalent: "")
+        menu.addItem(withTitle: "Push", action: #selector(didPush), keyEquivalent: "")
+        menu.addItem(withTitle: "Rebase...", action: #selector(didRebase), keyEquivalent: "")
+        menu.addItem(withTitle: "Merge...", action: #selector(didMerge), keyEquivalent: "")
+        for item in menu.items { item.target = self }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+    @objc func didCommit() { onAction("promptCommit") }
+    @objc func didPush() { onAction("push") }
+    @objc func didRebase() { onAction("promptRebase") }
+    @objc func didMerge() { onAction("promptMerge") }
     
     @discardableResult
     func runGit(args: [String]) -> (output: String, success: Bool) {
@@ -724,6 +842,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if type == "updateAllStatus" { updateAllStatus(); return }
         switch type {
         case "sync": refreshRepo(); case "track": promptForRepo(); case "auth": promptForAuth(); case "clear": clearRepo(); case "quit": NSApp.terminate(nil)
+        case "promptCommit": promptForCommit(); case "push": pushCommits(); case "promptRebase": promptForRebase(); case "promptMerge": promptForMerge()
         default: break
         }
     }
@@ -784,13 +903,133 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func addAndSelectRepo(_ repo: TrackedRepo) { if !config.repos.contains(where: { $0.path == repo.path }) { config.repos.append(repo) }; config.selectedRepoIndex = config.repos.firstIndex(where: { $0.path == repo.path }) ?? 0; saveConfig(); reloadUI() }
     func refreshRepo() {
         guard let currentRepo = config.currentRepo else { return }
-        DispatchQueue.main.async { if let vc = self.popover.contentViewController as? GitTrackerController { vc.syncBtn.isEnabled = false; vc.syncBtn.title = "Syncing..."; self.setStatus("⌛ Syncing...") } }
+        DispatchQueue.main.async { if let vc = self.popover.contentViewController as? GitTrackerController { vc.syncBtn.isEnabled = false; vc.syncBtn.title = "Fetching..."; self.setStatus("⌛ Fetching...") } }
         DispatchQueue.global(qos: .userInitiated).async {
             _ = self.runShell(args: ["-C", currentRepo.path, "fetch", "--all"]); _ = self.runShell(args: ["-C", currentRepo.path, "pull"])
-            DispatchQueue.main.async { self.reloadUI(status: "✅ Sync Complete"); self.updateAllStatus(); DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.setStatus("Auth Active") } }
+            DispatchQueue.main.async { self.reloadUI(status: "✅ Fetch Complete"); self.updateAllStatus(); DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.setStatus("Auth Active") } }
         }
     }
     func clearRepo() { if !config.repos.isEmpty && config.selectedRepoIndex < config.repos.count { config.repos.remove(at: config.selectedRepoIndex); config.selectedRepoIndex = max(0, config.selectedRepoIndex - 1); saveConfig(); reloadUI() } }
+    
+    func promptForCommit() {
+        let commitView = CommitView(onCommit: { message in
+            self.commitChanges(message: message)
+            self.dialogPopover.performClose(nil)
+        }, onCancel: { self.dialogPopover.performClose(nil) })
+        dialogPopover.contentViewController = NSHostingController(rootView: commitView)
+        if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
+    }
+
+    func commitChanges(message: String) {
+        guard let currentRepo = config.currentRepo else { return }
+        setStatus("⌛ Committing...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = self.runShell(args: ["-C", currentRepo.path, "add", "."])
+            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "commit", "-m", message])
+            DispatchQueue.main.async {
+                if success {
+                    self.reloadUI(status: "✅ Committed")
+                    self.updateAllStatus()
+                } else {
+                    self.setStatus("❌ Commit Failed", color: .systemRed)
+                    print(output)
+                }
+            }
+        }
+    }
+
+    func pushCommits() {
+        guard let currentRepo = config.currentRepo else { return }
+        setStatus("⌛ Pushing...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "push"])
+            DispatchQueue.main.async {
+                if success {
+                    self.reloadUI(status: "✅ Push Complete")
+                } else {
+                    self.setStatus("❌ Push Failed", color: .systemRed)
+                    print(output)
+                }
+            }
+        }
+    }
+
+    func promptForRebase() {
+        guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else { return }
+        let branchOut = runShell(args: ["-C", currentRepo.path, "branch", "-a", "--format=%(refname:short)"]).output
+        var branches = [String]()
+        for b in branchOut.components(separatedBy: "\n") {
+            let clean = b.trimmingCharacters(in: .whitespaces)
+            if !clean.isEmpty && clean != "HEAD" && !clean.hasSuffix("/HEAD") && clean != "origin" {
+                if !branches.contains(clean) { branches.append(clean) }
+            }
+        }
+        
+        let rebaseView = RebaseView(branches: branches, onRebase: { target in
+            self.rebaseBranch(target: target)
+            self.dialogPopover.performClose(nil)
+        }, onCancel: { self.dialogPopover.performClose(nil) })
+        
+        dialogPopover.contentViewController = NSHostingController(rootView: rebaseView)
+        if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
+    }
+
+    func rebaseBranch(target: String) {
+        guard let currentRepo = config.currentRepo else { return }
+        setStatus("⌛ Rebasing...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "rebase", target])
+            DispatchQueue.main.async {
+                if success {
+                    self.reloadUI(status: "✅ Rebase Complete")
+                    self.updateAllStatus()
+                } else {
+                    self.setStatus("❌ Rebase Failed", color: .systemRed)
+                    print(output)
+                    _ = self.runShell(args: ["-C", currentRepo.path, "rebase", "--abort"])
+                }
+            }
+        }
+    }
+
+    func promptForMerge() {
+        guard let currentRepo = config.currentRepo, FileManager.default.fileExists(atPath: currentRepo.path) else { return }
+        let branchOut = runShell(args: ["-C", currentRepo.path, "branch", "-a", "--format=%(refname:short)"]).output
+        var branches = [String]()
+        for b in branchOut.components(separatedBy: "\n") {
+            let clean = b.trimmingCharacters(in: .whitespaces)
+            if !clean.isEmpty && clean != "HEAD" && !clean.hasSuffix("/HEAD") && clean != "origin" {
+                if !branches.contains(clean) { branches.append(clean) }
+            }
+        }
+        let currentBranch = runShell(args: ["-C", currentRepo.path, "rev-parse", "--abbrev-ref", "HEAD"]).output.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        let mergeView = MergeView(branches: branches, currentBranch: currentBranch, onMerge: { target in
+            self.mergeBranch(target: target)
+            self.dialogPopover.performClose(nil)
+        }, onCancel: { self.dialogPopover.performClose(nil) })
+        
+        dialogPopover.contentViewController = NSHostingController(rootView: mergeView)
+        if let b = statusItem.button { dialogPopover.show(relativeTo: b.bounds, of: b, preferredEdge: .minY) }
+    }
+
+    func mergeBranch(target: String) {
+        guard let currentRepo = config.currentRepo else { return }
+        setStatus("⌛ Merging...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "merge", target])
+            DispatchQueue.main.async {
+                if success {
+                    self.reloadUI(status: "✅ Merge Complete")
+                    self.updateAllStatus()
+                } else {
+                    self.setStatus("❌ Merge Failed", color: .systemRed)
+                    print(output)
+                    _ = self.runShell(args: ["-C", currentRepo.path, "merge", "--abort"])
+                }
+            }
+        }
+    }
     func migrateConfig() {
         if let data = try? Data(contentsOf: URL(fileURLWithPath: configFilePath)), let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             if json["repos"] != nil { return }; var m = Config(); if let url = json["repoUrl"] as? String, let path = json["repoPath"] as? String { let name = url.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"; m.repos.append(TrackedRepo(url: url, path: path, name: name)) }

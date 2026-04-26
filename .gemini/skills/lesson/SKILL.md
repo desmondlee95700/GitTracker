@@ -97,3 +97,13 @@ This skill documents the critical decisions and technical hurdles encountered du
   - **Interactivity**: Use `withAnimation` (Spring) to expand/collapse file rows.
   - **Horizontal Handling**: Wrap diff content in a horizontal `ScrollView` to preserve code indentation and long lines.
   - **On-Demand Loading**: Only fetch and store the diff text when the row is first expanded to save memory.
+
+### 15. Action Menus over Button Clutter
+- **Lesson**: Adding too many actions (Commit, Push, Rebase, Merge) to the main layout clutters the UI and overwhelms the user.
+- **Standard**: Use an "Actions" dropdown menu (`NSMenu` triggered by an `NSButton` with the `ellipsis.circle` symbol) to group secondary actions together. Keep primary actions (like "Fetch origin", previously "Sync") visible.
+
+### 16. Destructive Git Operations (Rebase/Merge)
+- **Lesson**: Running destructive commands (`git rebase`, `git merge`) without explicit user target selection or handling conflicts can permanently break the UI or leave the repository in a stuck state.
+- **Standard**: 
+  - ALWAYS present a persistent dialog (`.applicationDefined` popover) forcing the user to select the target branch.
+  - NEVER leave the repository stuck in a merge/rebase state. If the operation fails (e.g., due to a conflict), immediately run `git merge --abort` or `git rebase --abort` to restore safety.
