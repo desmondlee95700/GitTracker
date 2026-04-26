@@ -1011,8 +1011,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { if let vc = self.popover.contentViewController as? GitTrackerController { vc.syncBtn.isEnabled = false; vc.syncBtn.title = "Fetching..."; self.setStatus("⌛ Fetching...") } }
         DispatchQueue.global(qos: .userInitiated).async {
             let authUrl = self.getAuthenticatedRemoteUrl(repoPath: currentRepo.path)
-            _ = self.runShell(args: ["-C", currentRepo.path, "fetch", authUrl]); _ = self.runShell(args: ["-C", currentRepo.path, "pull", authUrl])
-            DispatchQueue.main.async { self.reloadUI(status: "✅ Fetch Complete", show: true); self.updateAllStatus(); DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.setStatus("Auth Active") } }
+            let fetchResult = self.runShell(args: ["-C", currentRepo.path, "fetch", authUrl])
+            let pullResult = self.runShell(args: ["-C", currentRepo.path, "pull", authUrl])
+            DispatchQueue.main.async { 
+                if fetchResult.success && pullResult.success {
+                    self.reloadUI(status: "✅ Fetch Complete", show: true)
+                    self.updateAllStatus()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.setStatus("Auth Active") }
+                } else {
+                    let err = (!fetchResult.success ? fetchResult.output : pullResult.output).components(separatedBy: "\n").first { !$0.isEmpty } ?? "Sync Failed"
+                    self.reloadUI(status: "❌ \(err)", show: true)
+                }
+            }
         }
     }
     func clearRepo() { if !config.repos.isEmpty && config.selectedRepoIndex < config.repos.count { config.repos.remove(at: config.selectedRepoIndex); config.selectedRepoIndex = max(0, config.selectedRepoIndex - 1); saveConfig(); reloadUI() } }
@@ -1124,7 +1134,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if success {
                     self.reloadUI(status: "✅ Push Complete", show: true)
                 } else {
-                    self.setStatus("❌ Push Failed", color: .systemRed)
+                    let errorMsg = output.components(separatedBy: "\n").first(where: { !$0.isEmpty }) ?? "Push Failed"
+                    self.setStatus("❌ \(errorMsg)", color: .systemRed)
                     print(output)
                 }
             }

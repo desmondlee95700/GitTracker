@@ -120,3 +120,18 @@ This skill documents the critical decisions and technical hurdles encountered du
 - **Standard**: 
   - When opening a dialog from the main UI, explicitly call `popover.performClose(nil)` *before* showing the dialog.
   - Upon completion or failure of the background action, explicitly call `popover.show(...)` to automatically reopen the main window so the user sees the updated state (e.g., the new commit in the graph or the error badge).
+
+### 19. Dynamic Token Injection for Local Repos
+- **Problem**: Repositories added via "Choose Local Folder" often have remote URLs without the Personal Access Token (PAT). Standard Git operations like `push` or `fetch` fail because the app does not hook into the macOS Keychain.
+- **Solution**: Dynamically inject the PAT into the remote URL during command execution instead of modifying the user's permanent `.git/config`.
+- **Standard**: 
+  - Use a helper function `getAuthenticatedRemoteUrl` to retrieve the current `origin` URL.
+  - If it is a `github.com` URL and lacks an `@` symbol, prepend the stored `config.token`.
+  - Pass this authenticated URL directly to `git push`, `git fetch`, or `git pull` as the repository argument.
+
+### 20. Transparent Git Error Reporting
+- **Lesson**: Generic "Action Failed" messages are insufficient for debugging background shell operations, especially when network issues or authentication failures occur.
+- **Solution**: Capture the `stderr` or `stdout` output of failed commands and surface the first meaningful line to the UI.
+- **Standard**: 
+  - Instead of static failure strings, use `output.components(separatedBy: "\n").first(where: { !$0.isEmpty })` to extract the exact Git error.
+  - Display this message directly in the status pill to provide the user with immediate, actionable context.
