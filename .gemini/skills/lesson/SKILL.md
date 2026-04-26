@@ -107,3 +107,16 @@ This skill documents the critical decisions and technical hurdles encountered du
 - **Standard**: 
   - ALWAYS present a persistent dialog (`.applicationDefined` popover) forcing the user to select the target branch.
   - NEVER leave the repository stuck in a merge/rebase state. If the operation fails (e.g., due to a conflict), immediately run `git merge --abort` or `git rebase --abort` to restore safety.
+
+### 17. User-Facing Git Terminology
+- **Lesson**: Exposing internal Git jargon like "Dirty" and "Clean" can feel abrasive or negative to the user.
+- **Standard**: 
+  - Use `✎ Modified` instead of "Dirty" to indicate uncommitted local changes.
+  - Use `✓ Up to Date` instead of "Clean" to indicate a fully synced repository.
+  - Apply these terms to both the UI text and the internal Swift variables (e.g., `modifiedCount`, `upToDateCount`) for maintainability.
+
+### 18. Popover Transitions and Focus Loss
+- **Lesson**: Triggering a `.applicationDefined` dialog (like a Commit input box) from a `.transient` popover causes macOS to automatically hide the parent popover when the text field steals focus. This looks like a crash or abrupt closure.
+- **Standard**: 
+  - When opening a dialog from the main UI, explicitly call `popover.performClose(nil)` *before* showing the dialog.
+  - Upon completion or failure of the background action, explicitly call `popover.show(...)` to automatically reopen the main window so the user sees the updated state (e.g., the new commit in the graph or the error badge).
