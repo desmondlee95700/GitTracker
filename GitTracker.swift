@@ -93,7 +93,7 @@ struct StatusBadgeView: View {
                 Circle().fill(isActive ? Color.green : Color.red).frame(width: 8, height: 8)
                 if isActive { Circle().stroke(Color.green, lineWidth: 2).frame(width: 14, height: 14).scaleEffect(pulse).opacity(2.0 - pulse).onAppear { withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: false)) { pulse = 2.0 } } }
             }
-            Text(text).font(.system(size: 11, weight: .bold)).foregroundColor(isActive ? .green : .red)
+            Text(text.uppercased()).font(.system(size: 11, weight: .bold)).foregroundColor(isActive ? .green : .red)
         }
         .padding(.horizontal, 10).padding(.vertical, 4).background(Capsule().fill(isActive ? Color.green.opacity(0.1) : Color.red.opacity(0.1))).overlay(Capsule().stroke(isActive ? Color.green.opacity(0.2) : Color.red.opacity(0.2), lineWidth: 1))
     }
@@ -678,6 +678,7 @@ class GitTrackerController: NSViewController {
     var statusHostingView: NSHostingView<StatusBadgeView>!
     var selectionHostingView: NSHostingView<ProjectSelectionView>!
     var summaryBar: StackedStatusBar!; var summaryLabel: NSTextField!
+    var upToDateLabel: NSTextField!, modifiedLabel: NSTextField!, aheadLabel: NSTextField!, behindLabel: NSTextField!
     var syncBtn: NSButton!; var historyArea: NSView!
     
     init(config: Config, onAction: @escaping (String) -> Void) { self.config = config; self.onAction = onAction; super.init(nibName: nil, bundle: nil) }
@@ -688,24 +689,30 @@ class GitTrackerController: NSViewController {
     func setupUI() {
         let rootStack = FlippedStackView(); rootStack.orientation = .vertical; rootStack.spacing = 14; rootStack.alignment = .leading
         rootStack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 24, right: 24); rootStack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(rootStack)
-        NSLayoutConstraint.activate([rootStack.topAnchor.constraint(equalTo: view.topAnchor), rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor), rootStack.trailingAnchor.constraint(equalTo: view.trailingAnchor), rootStack.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
+        NSLayoutConstraint.activate([rootStack.topAnchor.constraint(equalTo: view.topAnchor), rootStack.leadingAnchor.constraint(equalTo: view.leadingAnchor), rootStack.trailingAnchor.constraint(equalTo: view.trailingAnchor)])
         
         let headerStack = NSStackView(); headerStack.orientation = .horizontal; headerStack.alignment = .centerY; headerStack.spacing = 12
-        if #available(macOS 11.0, *), let img = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil) {
-            let iv = NSImageView(image: img); iv.contentTintColor = .systemBlue; iv.translatesAutoresizingMaskIntoConstraints = false
-            iv.widthAnchor.constraint(equalToConstant: 24).isActive = true; iv.heightAnchor.constraint(equalToConstant: 24).isActive = true; headerStack.addArrangedSubview(iv)
-        }
-        let titleLabel = NSTextField(labelWithString: "GitTracker"); titleLabel.font = .systemFont(ofSize: 26, weight: .heavy); headerStack.addArrangedSubview(titleLabel)
+        let titleLabel = NSTextField(labelWithString: "GitTracker"); titleLabel.font = .systemFont(ofSize: 26, weight: .heavy); titleLabel.textColor = .systemBlue; headerStack.addArrangedSubview(titleLabel)
+        let vLabelTop = NSTextField(labelWithString: "V3.1"); vLabelTop.font = .systemFont(ofSize: 12, weight: .bold); vLabelTop.textColor = .white; vLabelTop.isBordered = false; vLabelTop.drawsBackground = false; headerStack.addArrangedSubview(vLabelTop)
+        
         headerStack.addArrangedSubview(NSView()); headerStack.arrangedSubviews.last?.setContentHuggingPriority(.defaultLow, for: .horizontal)
         
         statusHostingView = NSHostingView(rootView: StatusBadgeView(isActive: config.token != nil, text: config.token != nil ? "Auth Active" : "No Auth Set"))
         statusHostingView.translatesAutoresizingMaskIntoConstraints = false; headerStack.addArrangedSubview(statusHostingView); rootStack.addArrangedSubview(headerStack)
         
-        let summaryBox = NSBox(); summaryBox.boxType = .custom; summaryBox.fillColor = NSColor.white.withAlphaComponent(0.03); summaryBox.cornerRadius = 8; summaryBox.borderWidth = 0
-        let summaryStack = NSStackView(); summaryStack.orientation = .vertical; summaryStack.alignment = .leading; summaryStack.spacing = 8; summaryStack.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
-        summaryLabel = NSTextField(labelWithString: "OVERVIEW"); summaryLabel.font = .systemFont(ofSize: 10, weight: .black); summaryLabel.textColor = .secondaryLabelColor; summaryStack.addArrangedSubview(summaryLabel)
+        let summaryBox = NSBox(); summaryBox.boxType = .custom; summaryBox.fillColor = NSColor.white.withAlphaComponent(0.05); summaryBox.cornerRadius = 12; summaryBox.borderWidth = 1; summaryBox.borderColor = NSColor.white.withAlphaComponent(0.1)
+        let summaryStack = NSStackView(); summaryStack.orientation = .vertical; summaryStack.alignment = .leading; summaryStack.spacing = 10; summaryStack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
+        summaryLabel = NSTextField(labelWithString: "REPOSITORY HEALTH"); summaryLabel.font = .systemFont(ofSize: 10, weight: .black); summaryLabel.textColor = .secondaryLabelColor; summaryStack.addArrangedSubview(summaryLabel)
+        
+        let metricsStack = NSStackView(); metricsStack.orientation = .horizontal; metricsStack.spacing = 20; metricsStack.alignment = .centerY
+        behindLabel = createMetricLabel(color: .systemRed); metricsStack.addArrangedSubview(behindLabel)
+        aheadLabel = createMetricLabel(color: .systemBlue); metricsStack.addArrangedSubview(aheadLabel)
+        modifiedLabel = createMetricLabel(color: .systemOrange); metricsStack.addArrangedSubview(modifiedLabel)
+        upToDateLabel = createMetricLabel(color: .systemGreen); metricsStack.addArrangedSubview(upToDateLabel)
+        summaryStack.addArrangedSubview(metricsStack)
+        
         summaryBar = StackedStatusBar(); summaryBar.translatesAutoresizingMaskIntoConstraints = false; summaryStack.addArrangedSubview(summaryBar)
-        NSLayoutConstraint.activate([summaryBar.heightAnchor.constraint(equalToConstant: 8), summaryBar.widthAnchor.constraint(equalTo: summaryStack.widthAnchor, constant: -32)])
+        NSLayoutConstraint.activate([summaryBar.heightAnchor.constraint(equalToConstant: 12), summaryBar.widthAnchor.constraint(equalTo: summaryStack.widthAnchor, constant: -32)])
         summaryBox.addSubview(summaryStack); summaryStack.translatesAutoresizingMaskIntoConstraints = false; NSLayoutConstraint.activate([summaryStack.topAnchor.constraint(equalTo: summaryBox.topAnchor), summaryStack.leadingAnchor.constraint(equalTo: summaryBox.leadingAnchor), summaryStack.trailingAnchor.constraint(equalTo: summaryBox.trailingAnchor), summaryStack.bottomAnchor.constraint(equalTo: summaryBox.bottomAnchor)])
         rootStack.addArrangedSubview(summaryBox); NSLayoutConstraint.activate([summaryBox.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
         
@@ -727,7 +734,7 @@ class GitTrackerController: NSViewController {
         NSLayoutConstraint.activate([footer.topAnchor.constraint(equalTo: footerBox.topAnchor), footer.leadingAnchor.constraint(equalTo: footerBox.leadingAnchor), footer.trailingAnchor.constraint(equalTo: footerBox.trailingAnchor), footer.bottomAnchor.constraint(equalTo: footerBox.bottomAnchor)])
         rootStack.addArrangedSubview(footerBox); NSLayoutConstraint.activate([footerBox.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
         
-        let vLabel = NSTextField(labelWithString: "VERSION 3.0"); vLabel.font = .systemFont(ofSize: 10, weight: .bold); vLabel.textColor = .tertiaryLabelColor; vLabel.alignment = .center; vLabel.isBordered = false; vLabel.drawsBackground = false; rootStack.addArrangedSubview(vLabel); NSLayoutConstraint.activate([vLabel.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
+        let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .vertical); rootStack.addArrangedSubview(spacer)
         
         updateUIState(); onAction("updateAllStatus")
     }
@@ -823,6 +830,10 @@ class GitTrackerController: NSViewController {
     @objc func didMerge() { onAction("promptMerge") }
     @objc func didStash() { onAction("stash") }
     @objc func didStashPop() { onAction("stashPop") }
+    
+    func createMetricLabel(color: NSColor) -> NSTextField {
+        let tf = NSTextField(labelWithString: "0"); tf.font = .monospacedSystemFont(ofSize: 13, weight: .bold); tf.textColor = color; return tf
+    }
     
     @discardableResult
     func runGit(args: [String]) -> (output: String, success: Bool) {
@@ -952,7 +963,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             DispatchQueue.main.async {
                 if let vc = self.popover.contentViewController as? GitTrackerController {
-                    vc.summaryBar.update(upToDate: upToDate, modified: modified, ahead: ahead, behind: behind); vc.summaryLabel.stringValue = "OVERVIEW: \(attention) REPOS NEED ATTENTION"
+                    vc.summaryBar.update(upToDate: upToDate, modified: modified, ahead: ahead, behind: behind)
+                    vc.summaryLabel.stringValue = attention > 0 ? "HEALTH: ATTENTION NEEDED" : "HEALTH: ALL CLEAR"
+                    vc.behindLabel.stringValue = "↓ \(behind)"
+                    vc.aheadLabel.stringValue = "↑ \(ahead)"
+                    vc.modifiedLabel.stringValue = "✎ \(modified)"
+                    vc.upToDateLabel.stringValue = "✓ \(upToDate)"
                 }
                 if let b = self.statusItem.button {
                     if attention > 0 { if #available(macOS 11.0, *) { b.image = b.image?.withSymbolConfiguration(NSImage.SymbolConfiguration(hierarchicalColor: .systemOrange)) } }
