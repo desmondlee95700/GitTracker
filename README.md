@@ -1,4 +1,4 @@
-# GitTracker v2.1
+# GitTracker v3.0
 
 GitTracker is a beautiful, native macOS menu bar app designed to help you track multiple local and remote Git repositories from one place. It offers a sleek, modern interface, a visual Git graph, and simple authentication for private GitHub repositories.
 

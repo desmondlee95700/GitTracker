@@ -727,7 +727,7 @@ class GitTrackerController: NSViewController {
         NSLayoutConstraint.activate([footer.topAnchor.constraint(equalTo: footerBox.topAnchor), footer.leadingAnchor.constraint(equalTo: footerBox.leadingAnchor), footer.trailingAnchor.constraint(equalTo: footerBox.trailingAnchor), footer.bottomAnchor.constraint(equalTo: footerBox.bottomAnchor)])
         rootStack.addArrangedSubview(footerBox); NSLayoutConstraint.activate([footerBox.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
         
-        let vLabel = NSTextField(labelWithString: "VERSION 2.1"); vLabel.font = .systemFont(ofSize: 10, weight: .bold); vLabel.textColor = .tertiaryLabelColor; vLabel.alignment = .center; vLabel.isBordered = false; vLabel.drawsBackground = false; rootStack.addArrangedSubview(vLabel); NSLayoutConstraint.activate([vLabel.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
+        let vLabel = NSTextField(labelWithString: "VERSION 3.0"); vLabel.font = .systemFont(ofSize: 10, weight: .bold); vLabel.textColor = .tertiaryLabelColor; vLabel.alignment = .center; vLabel.isBordered = false; vLabel.drawsBackground = false; rootStack.addArrangedSubview(vLabel); NSLayoutConstraint.activate([vLabel.widthAnchor.constraint(equalTo: rootStack.widthAnchor, constant: -48)])
         
         updateUIState(); onAction("updateAllStatus")
     }
