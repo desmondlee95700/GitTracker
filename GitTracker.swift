@@ -949,9 +949,11 @@ class GitTrackerController: NSViewController {
 class AppDelegate: NSObject, NSApplicationDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength); let popover = NSPopover(); let dialogPopover = NSPopover(); var config = Config()
     var activeAuthSessionID: UUID?
+    var cachedGitHubToken: String?
     func applicationDidFinishLaunching(_ notification: Notification) {
         migrateConfig()
         loadConfig()
+        cachedGitHubToken = KeychainHelper.loadToken()
         
         // Expert UI: Generate App Icon (Blue Background + White Glyph)
         let iconSize = NSSize(width: 128, height: 128)
@@ -988,7 +990,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             (popover.contentViewController as? GitTrackerController)?.updateUIState(); updateAllStatus()
         }
     }
-    var hasGitHubAuth: Bool { !(config.githubLogin?.isEmpty ?? true) && !(KeychainHelper.loadToken()?.isEmpty ?? true) }
+    func refreshGitHubTokenCache() {
+        cachedGitHubToken = KeychainHelper.loadToken()
+    }
+    
+    var hasGitHubAuth: Bool { !(config.githubLogin?.isEmpty ?? true) && !(cachedGitHubToken?.isEmpty ?? true) }
     
     func ensureAskPassScript() -> String? {
         let path = "\(trackerRoot)/gittracker-askpass.sh"
@@ -1007,7 +1013,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func githubEnvironment() -> [String: String]? {
-        guard let login = config.githubLogin, let token = KeychainHelper.loadToken(), let askPass = ensureAskPassScript() else { return nil }
+        guard let login = config.githubLogin, let token = cachedGitHubToken, let askPass = ensureAskPassScript() else { return nil }
         var env = ProcessInfo.processInfo.environment
         env["GIT_ASKPASS"] = askPass
         env["GIT_TERMINAL_PROMPT"] = "0"
@@ -1532,6 +1538,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     guard self.activeAuthSessionID == sessionID else { return }
                     KeychainHelper.saveToken(accessToken)
+                    self.cachedGitHubToken = accessToken
                     self.config.githubLogin = user.login
                     self.config.username = nil
                     self.config.token = nil
@@ -1569,6 +1576,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func signOutGitHub() {
         activeAuthSessionID = nil
         KeychainHelper.deleteToken()
+        cachedGitHubToken = nil
         config.githubLogin = nil
         config.username = nil
         config.token = nil
@@ -1582,7 +1590,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 var m = Config()
                 if let url = json["repoUrl"] as? String, let path = json["repoPath"] as? String { let name = url.components(separatedBy: "/").last?.replacingOccurrences(of: ".git", with: "") ?? "repo"; m.repos.append(TrackedRepo(url: url, path: path, name: name)) }
                 if let u = json["username"] as? String { m.githubLogin = u }
-                if let t = json["token"] as? String, !t.isEmpty { KeychainHelper.saveToken(t) }
+                if let t = json["token"] as? String, !t.isEmpty { KeychainHelper.saveToken(t); cachedGitHubToken = t }
                 self.config = m
                 saveConfig()
                 return
@@ -1593,6 +1601,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if let legacyToken = json["token"] as? String, !legacyToken.isEmpty {
                 KeychainHelper.saveToken(legacyToken)
+                cachedGitHubToken = legacyToken
                 config.token = nil
                 config.username = nil
                 shouldSave = true
@@ -1606,6 +1615,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if config.githubLogin == nil { config.githubLogin = config.username }
             if let legacyToken = config.token, !legacyToken.isEmpty {
                 KeychainHelper.saveToken(legacyToken)
+                cachedGitHubToken = legacyToken
                 config.token = nil
                 config.username = nil
                 saveConfig()
