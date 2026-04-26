@@ -996,11 +996,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     func addAndSelectRepo(_ repo: TrackedRepo) { if !config.repos.contains(where: { $0.path == repo.path }) { config.repos.append(repo) }; config.selectedRepoIndex = config.repos.firstIndex(where: { $0.path == repo.path }) ?? 0; saveConfig(); reloadUI(show: true) }
+    func getAuthenticatedRemoteUrl(repoPath: String) -> String {
+        let result = runShell(args: ["-C", repoPath, "remote", "get-url", "origin"])
+        guard result.success else { return "origin" }
+        let url = result.output
+        if url.contains("github.com") && !url.contains("@"), let token = config.token, !token.isEmpty {
+            return url.replacingOccurrences(of: "https://", with: "https://\(token)@")
+        }
+        return "origin"
+    }
+
     func refreshRepo() {
         guard let currentRepo = config.currentRepo else { return }
         DispatchQueue.main.async { if let vc = self.popover.contentViewController as? GitTrackerController { vc.syncBtn.isEnabled = false; vc.syncBtn.title = "Fetching..."; self.setStatus("⌛ Fetching...") } }
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = self.runShell(args: ["-C", currentRepo.path, "fetch", "--all"]); _ = self.runShell(args: ["-C", currentRepo.path, "pull"])
+            let authUrl = self.getAuthenticatedRemoteUrl(repoPath: currentRepo.path)
+            _ = self.runShell(args: ["-C", currentRepo.path, "fetch", authUrl]); _ = self.runShell(args: ["-C", currentRepo.path, "pull", authUrl])
             DispatchQueue.main.async { self.reloadUI(status: "✅ Fetch Complete", show: true); self.updateAllStatus(); DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self.setStatus("Auth Active") } }
         }
     }
@@ -1107,7 +1118,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let currentRepo = config.currentRepo else { return }
         setStatus("⌛ Pushing...")
         DispatchQueue.global(qos: .userInitiated).async {
-            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "push", "-u", "origin", "HEAD"])
+            let authUrl = self.getAuthenticatedRemoteUrl(repoPath: currentRepo.path)
+            let (output, success) = self.runShell(args: ["-C", currentRepo.path, "push", "-u", authUrl, "HEAD"])
             DispatchQueue.main.async {
                 if success {
                     self.reloadUI(status: "✅ Push Complete", show: true)
